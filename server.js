@@ -671,12 +671,10 @@ app.post(["/api/auth/reset-password", "/api/reset-password"], async (req, res) =
 
 const initDefaultAdmin = async () => {
   try {
-    // 🟢 Asegurar que existan las columnas requeridas en la tabla users
-    await pool.query(`
-      ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE;
-      ALTER TABLE users ADD COLUMN IF NOT EXISTS position VARCHAR(100);
-      ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url TEXT;
-    `);
+    // 🟢 Crear columnas una por una de forma segura
+    await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE;`);
+    await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS position VARCHAR(100);`);
+    await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url TEXT;`);
 
     // Consulta de verificación de admin existente
     const check = await pool.query(
