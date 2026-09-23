@@ -669,34 +669,33 @@ app.post(["/api/auth/reset-password", "/api/reset-password"], async (req, res) =
   }
 });
 
-// ============================================================================
-// 🟢 AUTO-INICIALIZACIÓN DE ADMINISTRADOR (CON DETECCIÓN DE COLUMNA)
-// ============================================================================
 const initDefaultAdmin = async () => {
   try {
-    const adminEmail = "admin@empresa.com";
-    const defaultPassword = "123456";
-    const passCol = await getPasswordColumnName();
+    // 🟢 Asegurar que existan las columnas requeridas en la tabla users
+    await pool.query(`
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS position VARCHAR(100);
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url TEXT;
+    `);
 
+    // Consulta de verificación de admin existente
     const check = await pool.query(
-      "SELECT id FROM users WHERE LOWER(TRIM(email)) = $1",
+      `SELECT * FROM users WHERE LOWER(email) = LOWER($1)`,
       [adminEmail]
     );
-
-    const hashedPassword = await bcrypt.hash(defaultPassword, 10);
 
     if (check.rows.length === 0) {
       await pool.query(
         `INSERT INTO users (email, ${passCol}, role, is_active, created_at) VALUES ($1, $2, 'admin', true, NOW())`,
         [adminEmail, hashedPassword]
       );
-      console.log(`🔒 Cuenta Administrador inicial creada: ${adminEmail} / ${defaultPassword}`);
+      console.log(`🔒 Cuenta Administrador inicial creada: ${adminEmail} / ${defaultPass}`);
     } else {
       await pool.query(
-        `UPDATE users SET ${passCol} = $1, is_active = true, role = 'admin' WHERE LOWER(TRIM(email)) = $2`,
+        `UPDATE users SET ${passCol} = $1, is_active = true, role = 'admin' WHERE LOWER(email) = LOWER($2)`,
         [hashedPassword, adminEmail]
       );
-      console.log(`🔑 Administrador ${adminEmail} verificado y contraseña resincronizada a '123456'.`);
+      console.log(`🔑 Administrador ${adminEmail} verificado y contraseña resincronizada.`);
     }
   } catch (err) {
     console.error("⚠️ Error en inicialización del Admin:", err.message);
