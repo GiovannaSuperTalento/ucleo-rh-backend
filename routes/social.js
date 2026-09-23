@@ -590,7 +590,7 @@ router.post("/extension/complete", async (req, res) => {
   }
 });
 
-// 🟢 CRON JOB EN BACKEND (Cada 5 minutos)
+// 🟢 CRON JOB EN BACKEND (Cada 5 minutos) - Seguro ante reconexiones
 cron.schedule("*/5 * * * *", async () => {
   try {
     await pool.query(`
@@ -618,7 +618,7 @@ cron.schedule("*/5 * * * *", async () => {
       }
     }
   } catch (err) {
-    console.error("[CRON SOCIAL ERROR]", err);
+    console.error("[CRON SOCIAL ERROR]", err.message);
   }
 });
 
