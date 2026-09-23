@@ -1,0 +1,77 @@
+
+    <!DOCTYPE html>
+    <html lang="es">
+    <head>
+      <meta charset="UTF-8">
+      <title>CARTA DE ACREDITACIÓN PARA GUARDERÍA IMSS</title>
+      <style>
+        body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; color: #1B2A2E; margin: 0; padding: 40px; background: #fff; }
+        .header { border-bottom: 2px solid #1B4B43; padding-bottom: 15px; margin-bottom: 25px; }
+        .company-title { color: #1B4B43; font-size: 22px; font-weight: bold; margin: 0; }
+        .company-subtitle { color: #5B6B6E; font-size: 11px; margin-top: 4px; }
+        .date { text-align: right; font-size: 12px; color: #5B6B6E; margin-bottom: 30px; }
+        .doc-title { text-align: center; color: #1B4B43; font-size: 16px; font-weight: bold; letter-spacing: 1px; margin-bottom: 30px; text-transform: uppercase; }
+        .emp-box { background: #F3F5F4; border: 1px solid #E1E6E4; border-radius: 8px; padding: 15px; margin-bottom: 30px; font-size: 12px; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+        .content { font-size: 13px; line-height: 1.8; color: #1B2A2E; text-align: justify; margin-bottom: 50px; }
+        .signatures { margin-top: 80px; display: flex; justify-content: space-between; text-align: center; font-size: 12px; }
+        .sig-line { width: 200px; border-top: 1px solid #1B2A2E; padding-top: 8px; margin: 0 auto; }
+        .footer { margin-top: 60px; font-size: 10px; color: #5B6B6E; text-align: center; border-top: 1px solid #E1E6E4; padding-top: 15px; }
+        @media print {
+          body { padding: 20px; }
+          .no-print { display: none; }
+        }
+      </style>
+    </head>
+    <body>
+      <div className="no-print" style="position: fixed; top: 15px; right: 15px;">
+        <button onclick="window.print()" style="background: #1B4B43; color: white; border: none; padding: 10px 18px; border-radius: 6px; font-weight: bold; cursor: pointer;">🖨️ Imprimir / Guardar en PDF</button>
+      </div>
+
+      <div class="header">
+        <h1 class="company-title">NÚCLEO RH S.A. DE C.V.</h1>
+        <div class="company-subtitle">Departamento de Gestión de Talento & Recursos Humanos<br>RFC: NRH180512AAA · Av. de las Industrias #1000</div>
+      </div>
+
+      <div class="date">Guadalajara, Jalisco a 8 de septiembre de 2026</div>
+
+      <div class="doc-title">CARTA DE ACREDITACIÓN PARA GUARDERÍA IMSS</div>
+
+      <div class="emp-box">
+        <div><b>Colaborador:</b> Giovanna  Sustayta</div>
+        <div><b>Puesto:</b> Reclutador</div>
+        <div><b>CURP:</b> SUGG001029MJCSRVA8</div>
+        <div><b>NSS:</b> 06130089128</div>
+        <div><b>RFC:</b> SUGG0010298H3</div>
+        <div><b>Fecha de Alta:</b> 24 de abril de 2025</div>
+      </div>
+
+      <div class="content">
+        
+      <p><b>INSTITUTO MEXICANO DEL SEGURO SOCIAL (IMSS)<br>DELEGACIÓN DE GUARDERÍAS</b></p>
+      <p>Por este medio se certifica que el/la trabajador(a) <b>Giovanna  Sustayta</b>, afiliado(a) con NSS <b>06130089128</b>, presta sus servicios en esta empresa con un horario laboral de 09:00 a 18:00 horas de Lunes a Viernes.</p>
+      <p>Acredita una percepción salarial de <b>$16,000.00 MXN</b>. Se expide la presente a petición del trabajador para tramitar la inscripción del menor en el servicio de guardería correspondiente.</p>
+    
+      </div>
+
+      <div class="signatures">
+        <div>
+          <div class="sig-line"><b>Lic. Roberto Morales A.</b><br><span style="font-size: 10px; color: #5B6B6E;">Dirección de Recursos Humanos</span></div>
+        </div>
+        <div>
+          <div class="sig-line"><b>Giovanna  Sustayta</b><br><span style="font-size: 10px; color: #5B6B6E;">Firma del Colaborador</span></div>
+        </div>
+      </div>
+
+      <div class="footer">
+        Documento oficial generado electrónicamente por el Sistema Núcleo RH. Válido sin tachaduras ni enmendaduras.
+      </div>
+
+      <script>
+        // Disparar ventana de impresión/guardar PDF de forma automática al abrir
+        window.onload = function() {
+          setTimeout(function() { window.print(); }, 500);
+        };
+      </script>
+    </body>
+    </html>
+  
