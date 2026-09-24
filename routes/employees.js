@@ -218,7 +218,7 @@ router.get("/me", async (req, res) => {
   }
 });
 
-// 🟢 CARGA MASIVA DE EXCEL MAPEDA A TU PLANTILLA OFICIAL
+// 🟢 CARGA MASIVA DE EXCEL DESGLOSANDO APELLIDOS, CURP, RFC Y DOMICILIOS
 router.post("/upload-excel", upload.single("file"), async (req, res) => {
   if (!req.file) {
     return res.status(400).json({ message: "No se seleccionó ningún archivo Excel." });
@@ -267,8 +267,6 @@ router.post("/upload-excel", upload.single("file"), async (req, res) => {
       return null;
     };
 
-    // Mapeo dinámico por coincidencia o fallback exacto a las 42 columnas oficiales
-    let headerRowNumber = 1;
     let colMap = {
       company_name: 1, nss: 2, first_name: 3, last_name_paternal: 4, last_name_maternal: 5,
       curp: 6, base_daily_salary: 7, sdi_salary: 8, hire_date: 9, department: 10,
@@ -281,7 +279,6 @@ router.post("/upload-excel", upload.single("file"), async (req, res) => {
       contract_type: 40, contract_start_date: 41, contract_end_date: 42
     };
 
-    // Escanear encabezados dinámicamente si los nombres coinciden
     const headerRow = worksheet.getRow(1);
     headerRow.eachCell({ includeEmpty: false }, (cell, colNum) => {
       const val = cleanHeader(getCellText(headerRow, colNum));
@@ -334,8 +331,17 @@ router.post("/upload-excel", upload.single("file"), async (req, res) => {
       if (rowNumber === 1) return;
 
       const rawFirstName = getCellText(row, colMap.first_name);
-      const rawPaternal = getCellText(row, colMap.last_name_paternal);
-      const rawMaternal = getCellText(row, colMap.last_name_maternal);
+      let rawPaternal = getCellText(row, colMap.last_name_paternal);
+      let rawMaternal = getCellText(row, colMap.last_name_maternal);
+
+      // 🟢 SI EL APELLIDO PATERNO TRAE AMBOS APELLIDOS (EJ. "RIVERA ENCINO"), DESGLOSAR AUTOMÁTICAMENTE
+      if (rawPaternal && !rawMaternal && rawPaternal.trim().includes(" ")) {
+        const parts = rawPaternal.trim().split(/\s+/);
+        if (parts.length >= 2) {
+          rawPaternal = parts[0];
+          rawMaternal = parts.slice(1).join(" ");
+        }
+      }
 
       const first_name = capitalize(rawFirstName);
       const last_name_paternal = capitalize(rawPaternal);
@@ -460,7 +466,7 @@ router.post("/upload-excel", upload.single("file"), async (req, res) => {
         mapField("education_level", emp.education_level);
         mapField("last_grade", emp.last_grade);
 
-        // 🟢 Domicilio Personal
+        // Domicilio Personal
         mapField("street", emp.street);
         mapField("exterior_number", emp.exterior_number);
         mapField("interior_number", emp.interior_number);
@@ -469,7 +475,7 @@ router.post("/upload-excel", upload.single("file"), async (req, res) => {
         mapField("municipality", emp.municipality);
         mapField("state", emp.state);
 
-        // 🟢 Domicilio Fiscal (Constancia de Situación Fiscal)
+        // Domicilio Fiscal (Duplicado del personal por defecto)
         mapField("fiscal_street", emp.street);
         mapField("fiscal_exterior_number", emp.exterior_number);
         mapField("fiscal_interior_number", emp.interior_number);
@@ -934,8 +940,8 @@ router.get("/:id/download-all", async (req, res) => {
         cdHeader.writeUInt16LE(20, 6);
         cdHeader.writeUInt16LE(0, 8);
         cdHeader.writeUInt16LE(8, 10);
+        cdHeader.writeUInt16LE(0, 12);
         cdHeader.writeUInt16LE(0, 14);
-        cdHeader.writeUInt16LE(0, 16);
         cdHeader.writeUInt32LE(entry.crc, 16);
         cdHeader.writeUInt32LE(entry.compSize, 20);
         cdHeader.writeUInt32LE(entry.uncompSize, 24);
