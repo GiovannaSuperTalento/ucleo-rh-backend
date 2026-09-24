@@ -659,9 +659,21 @@ async function checkAndFixSchema() {
   try {
     console.log("🛠️ Verificando y creando estructura de tablas/columnas en PostgreSQL...");
 
-    // 1. Crear la columna hire_date, street, y todas las columnas del expediente
+    // 1. Crear las columnas de apellidos desglosados, CURP, RFC, hire_date, etc.
     await pool.query(`
       ALTER TABLE employees 
+      ADD COLUMN IF NOT EXISTS last_name_paternal VARCHAR(255),
+      ADD COLUMN IF NOT EXISTS last_name_maternal VARCHAR(255),
+      ADD COLUMN IF NOT EXISTS curp VARCHAR(50),
+      ADD COLUMN IF NOT EXISTS rfc VARCHAR(50),
+      ADD COLUMN IF NOT EXISTS nss VARCHAR(50),
+      ADD COLUMN IF NOT EXISTS birth_date DATE,
+      ADD COLUMN IF NOT EXISTS birth_place_municipality VARCHAR(255),
+      ADD COLUMN IF NOT EXISTS birth_place_state VARCHAR(255),
+      ADD COLUMN IF NOT EXISTS gender VARCHAR(50),
+      ADD COLUMN IF NOT EXISTS marital_status VARCHAR(50),
+      ADD COLUMN IF NOT EXISTS education_level VARCHAR(255),
+      ADD COLUMN IF NOT EXISTS last_grade VARCHAR(255),
       ADD COLUMN IF NOT EXISTS hire_date DATE,
       ADD COLUMN IF NOT EXISTS street VARCHAR(255),
       ADD COLUMN IF NOT EXISTS exterior_number VARCHAR(50),
