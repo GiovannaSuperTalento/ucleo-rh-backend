@@ -44,6 +44,16 @@ function capitalize(str) {
     .join(" ");
 }
 
+// 🟢 HELPER PARA NORMALIZAR Y COMPARAR ENCABEZADOS DE EXCEL FLEXIBLEMENTE
+function cleanHeader(str) {
+  if (!str) return "";
+  return String(str)
+    .trim()
+    .toUpperCase()
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "") // Eliminar acentos
+    .replace(/[^A-Z0-9]/g, ""); // Dejar solo letras y números
+}
+
 // 🟢 HELPER PARA CONVERTIR NÚMEROS A LETRAS EN ESPAÑOL (MONEDA NACIONAL)
 function numeroALetras(num) {
   if (num === null || num === undefined || isNaN(num) || num === 0) return "Cero pesos 00/100 M.N.";
@@ -55,7 +65,7 @@ function numeroALetras(num) {
 
   const unidades = ["", "un", "dos", "tres", "cuatro", "cinco", "seis", "siete", "ocho", "nueve"];
   const decenas = ["", "diez", "veinte", "treinta", "cuarenta", "cincuenta", "sesenta", "setenta", "ochenta", "noventa"];
-  const especiales = ["diez", "once", "doce", "trece", "catorce", "quince", "dieciséis", "diecisiete", "dieciocho", "diecinueve"];
+  const especiales = ["diez", "once", "doce", "trece", "catorce", "quince", "dieciséis", "diecisiete", "diecisiete", "dieciocho", "diecinueve"];
   const cientos = ["", "ciento", "doscientos", "trescientos", "cuatrocientos", "quinientos", "seiscientos", "setecientos", "ochocientos", "novecentos"];
 
   function convertirGrupo(n) {
@@ -215,7 +225,7 @@ router.get("/me", async (req, res) => {
   }
 });
 
-// 🟢 CARGA MASIVA DESDE EXCEL COMPLETA
+// 🟢 CARGA MASIVA DESDE EXCEL FLEXIBLE Y RESISTENTE
 router.post("/upload-excel", upload.single("file"), async (req, res) => {
   if (!req.file) {
     return res.status(400).json({ message: "No se seleccionó ningún archivo Excel." });
@@ -272,62 +282,61 @@ router.post("/upload-excel", upload.single("file"), async (req, res) => {
 
     const headerRow = worksheet.getRow(1);
     headerRow.eachCell({ includeEmpty: false }, (cell, colNum) => {
-      const val = getCellText(headerRow, colNum).toUpperCase();
+      const val = cleanHeader(getCellText(headerRow, colNum));
 
       if (val.includes("NOMBRE") && !val.includes("EMPRESA") && !val.includes("EMERG") && !val.includes("PADRE")) colMap.first_name = colNum;
-      else if (val.includes("PATERNO") || val.includes("A. PATERNO")) colMap.last_name_paternal = colNum;
-      else if (val.includes("MATERNO") || val.includes("A. MATERNO")) colMap.last_name_maternal = colNum;
+      else if (val.includes("PATERNO") || val.includes("APATERNO")) colMap.last_name_paternal = colNum;
+      else if (val.includes("MATERNO") || val.includes("AMATERNO")) colMap.last_name_maternal = colNum;
       else if (val.includes("CORREO") || val.includes("EMAIL") || val.includes("TRABAJADOR")) colMap.email = colNum;
       else if (val.includes("PUESTO")) colMap.position = colNum;
       else if (val.includes("DEPTO") || val.includes("DEPARTAMENTO")) colMap.department = colNum;
-      else if (val.includes("ALTA") || val.includes("F. DE ALTA")) colMap.hire_date = colNum;
+      else if (val.includes("ALTA") || val.includes("FDEALTA") || val.includes("FECHAALTA")) colMap.hire_date = colNum;
       else if (val.includes("CURP")) colMap.curp = colNum;
       else if (val.includes("RFC")) colMap.rfc = colNum;
-      else if (val.includes("IMSS") || val.includes("NSS")) colMap.nss = colNum;
-      else if (val.includes("NAC") && (val.includes("FECHA") || val.includes("DD/MM"))) colMap.birth_date = colNum;
-      else if (val.includes("LUGAR NAC") || val.includes("MUNICIPIO NAC")) colMap.birth_place_municipality = colNum;
-      else if (val.includes("ESTADO NAC")) colMap.birth_place_state = colNum;
-      else if (val.includes("SEXO")) colMap.gender = colNum;
-      else if (val.includes("EDO CIVIL") || val.includes("ESTADO CIVIL")) colMap.marital_status = colNum;
+      else if (val.includes("IMSS") || val.includes("NSS") || val.includes("SEGURO")) colMap.nss = colNum;
+      else if (val.includes("FECHANAC") || val.includes("NACIMIENTO")) colMap.birth_date = colNum;
+      else if (val.includes("LUGARNAC") || val.includes("MUNICIPIONAC")) colMap.birth_place_municipality = colNum;
+      else if (val.includes("ESTADONAC")) colMap.birth_place_state = colNum;
+      else if (val.includes("SEXO") || val.includes("GENERO")) colMap.gender = colNum;
+      else if (val.includes("EDOCIVIL") || val.includes("ESTADOCIVIL")) colMap.marital_status = colNum;
       else if (val.includes("ESCOLARIDAD")) colMap.education_level = colNum;
-      else if (val.includes("ULTIMO GRADO") || val.includes("GRADO")) colMap.last_grade = colNum;
+      else if (val.includes("ULTIMOGRADO") || val.includes("GRADO")) colMap.last_grade = colNum;
       else if (val === "CALLE") colMap.street = colNum;
-      else if (val.includes("NUMERO SIN #") || val.includes("NUMERO EXT") || val.includes("EXTERIOR")) colMap.exterior_number = colNum;
-      else if (val.includes("INTERIOR")) colMap.interior_number = colNum;
+      else if (val.includes("EXTERIOR") || val.includes("NUMEROSIN") || val.includes("EXT")) colMap.exterior_number = colNum;
+      else if (val.includes("INTERIOR") || val.includes("INT")) colMap.interior_number = colNum;
       else if (val.includes("COLONIA")) colMap.neighborhood = colNum;
-      else if (val === "CP" || val.includes("C.P.") || val.includes("POSTAL")) colMap.postal_code = colNum;
+      else if (val === "CP" || val.includes("POSTAL")) colMap.postal_code = colNum;
       else if (val === "MUNICIPIO") colMap.municipality = colNum;
       else if (val.includes("ESTADO") && !val.includes("NAC") && !val.includes("CIVIL")) colMap.state = colNum;
       else if (val.includes("TEL1") || val.includes("TELEFONO")) colMap.phone = colNum;
       else if (val.includes("CELULAR") || val.includes("MOVIL")) colMap.mobile_phone = colNum;
-      else if (val.includes("CONTACTO EMERG")) colMap.emergency_contact_name = colNum;
+      else if (val.includes("CONTACTOEMERG") || val.includes("EMERGENCIA")) colMap.emergency_contact_name = colNum;
       else if (val.includes("RELACION") && val.includes("EMERG")) colMap.emergency_contact_relationship = colNum;
-      else if (val.includes("TEL EMERG")) colMap.emergency_contact_phone = colNum;
-      else if (val.includes("TIPO NOM") || val.includes("NOMINA")) colMap.payroll_type = colNum;
-      else if (val.includes("INFONAVIT") && val.includes("CREDITO")) colMap.has_infonavit_credit = colNum;
-      else if (val.includes("NUM CRED INFO") || val.includes("NUMERO CREDITO")) colMap.infonavit_credit_number = colNum;
-      else if (val.includes("VALOR DESCUENTO")) colMap.infonavit_discount_value = colNum;
+      else if (val.includes("TELEMERG")) colMap.emergency_contact_phone = colNum;
+      else if (val.includes("NOMINA") || val.includes("TIPONOM")) colMap.payroll_type = colNum;
+      else if (val.includes("INFONAVIT")) colMap.has_infonavit_credit = colNum;
+      else if (val.includes("NUMCREDINFO") || val.includes("CREDITOINFO")) colMap.infonavit_credit_number = colNum;
+      else if (val.includes("VALORDESCUENTO") || val.includes("DESCUENTO")) colMap.infonavit_discount_value = colNum;
       else if (val.includes("BANCO")) colMap.bank_name = colNum;
       else if (val.includes("CUENTA") && !val.includes("CLABE")) colMap.bank_account = colNum;
       else if (val.includes("CLABE")) colMap.bank_clabe = colNum;
-      else if (val.includes("TIPO DE CONTRATO") || val.includes("CONTRATO")) colMap.contract_type = colNum;
-      else if (val.includes("INICIO DE CONTRATO")) colMap.contract_start_date = colNum;
-      else if (val.includes("TERMINO DE CONTRATO")) colMap.contract_end_date = colNum;
-      else if (val.includes("S.D ALTA") || val.includes("SALARIO DIARIO")) colMap.base_daily_salary = colNum;
-      else if (val.includes("S.D. I. ALTA") || val.includes("SDI")) colMap.sdi_salary = colNum;
+      else if (val.includes("CONTRATO")) colMap.contract_type = colNum;
+      else if (val.includes("INICIOCONTRATO")) colMap.contract_start_date = colNum;
+      else if (val.includes("TERMINOCONTRATO")) colMap.contract_end_date = colNum;
+      else if (val.includes("SDALTA") || val.includes("SALARIODIARIO")) colMap.base_daily_salary = colNum;
+      else if (val.includes("SDIALTA") || val.includes("SDI")) colMap.sdi_salary = colNum;
     });
 
     worksheet.eachRow({ includeEmpty: false }, (row, rowNumber) => {
       if (rowNumber === 1) return;
 
-      let rawFirstName = colMap.first_name !== -1 ? getCellText(row, colMap.first_name) : "";
-      let rawPaternal = colMap.last_name_paternal !== -1 ? getCellText(row, colMap.last_name_paternal) : "";
-      let rawMaternal = colMap.last_name_maternal !== -1 ? getCellText(row, colMap.last_name_maternal) : "";
+      let rawFirstName = colMap.first_name !== -1 ? getCellText(row, colMap.first_name) : getCellText(row, 3);
+      let rawPaternal = colMap.last_name_paternal !== -1 ? getCellText(row, colMap.last_name_paternal) : getCellText(row, 4);
+      let rawMaternal = colMap.last_name_maternal !== -1 ? getCellText(row, colMap.last_name_maternal) : getCellText(row, 5);
 
       if (!rawFirstName && !rawPaternal) {
-        rawFirstName = getCellText(row, 3) || getCellText(row, 1);
-        rawPaternal = getCellText(row, 4) || getCellText(row, 2);
-        rawMaternal = getCellText(row, 5);
+        rawFirstName = getCellText(row, 1) || getCellText(row, 2);
+        rawPaternal = getCellText(row, 3);
       }
 
       const first_name = capitalize(rawFirstName);
@@ -568,7 +577,6 @@ router.post("/:id/upload-batch-documents", upload.single("file"), async (req, re
     const mainPdfDoc = await PDFDocument.load(mainPdfBytes);
     const totalPages = mainPdfDoc.getPageCount();
 
-    // Si el cliente no envía el mapa explícito, asigna 1 hoja por tipo según el arreglo estándar
     if (Object.keys(mapping).length === 0) {
       for (let i = 0; i < totalPages; i++) {
         const category = defaultDocTypes[i] || "Formatos Varios";
@@ -582,7 +590,6 @@ router.post("/:id/upload-batch-documents", upload.single("file"), async (req, re
     for (const [docType, pageIndexes] of Object.entries(mapping)) {
       if (!Array.isArray(pageIndexes) || pageIndexes.length === 0) continue;
 
-      // Soporta arreglos directos de índices de páginas [0, 1, 2]
       const validIndexes = pageIndexes.filter(idx => typeof idx === "number" && idx >= 0 && idx < totalPages);
       if (validIndexes.length === 0) continue;
 
@@ -1004,12 +1011,10 @@ router.post("/:id/fill-custom-template", upload.single("template"), async (req, 
 
     const fechaIngresoFormateada = formatearFechaLarga(e.hire_date || e.contract_start_date);
 
-    // 🟢 LIMPIEZA DE BENEFICIARIO PARA EVITAR UNDEFINED
     const nombreBeneficiarioClean = (e.beneficiary_name && String(e.beneficiary_name).trim() !== "" && String(e.beneficiary_name).toLowerCase() !== "null" && String(e.beneficiary_name).toLowerCase() !== "undefined")
       ? String(e.beneficiary_name).trim()
       : "SIN REGISTRAR";
 
-    // 🟢 FORMATO Y ENLISTADO DE ACTIVIDADES DEL PUESTO EN MAYÚSCULAS/MINÚSCULAS CORRECTAS
     const rawActividades = (e.job_activities && String(e.job_activities).trim() !== "" && String(e.job_activities).toLowerCase() !== "null" && String(e.job_activities).toLowerCase() !== "undefined")
       ? String(e.job_activities).trim()
       : "Las indicadas por la Dirección General y correspondientes a su puesto.";
@@ -1079,7 +1084,6 @@ router.post("/:id/fill-custom-template", upload.single("template"), async (req, 
 
       domicilio_fiscal: `${e.fiscal_street || e.street || ""} #${e.fiscal_exterior_number || e.exterior_number || ""} ${e.fiscal_interior_number ? `INT. ${e.fiscal_interior_number}` : ""}, COL. ${e.fiscal_neighborhood || e.neighborhood || ""}, CP ${e.fiscal_postal_code || e.postal_code || ""}, ${e.fiscal_municipality || e.municipality || ""}, ${e.fiscal_state || e.state || ""}`.trim(),
 
-      // 🟢 SALARIOS NUMÉRICOS Y SUS CORRESPONDIENTES TEXTOS EN LETRAS
       salario_diario: `$${salarioDiarioNum.toFixed(2)} MXN`,
       salario_diario_num: salarioDiarioNum.toFixed(2),
       base_daily_salary: `$${salarioDiarioNum.toFixed(2)} MXN`,
@@ -1098,7 +1102,6 @@ router.post("/:id/fill-custom-template", upload.single("template"), async (req, 
       salario_diario_integrado: `$${salarioSdiNum.toFixed(2)} MXN`,
       sdi_salary: `$${salarioSdiNum.toFixed(2)} MXN`,
 
-      // 🟢 BENEFICIARIO Y ALIAS SIN UNDEFINED
       beneficiario: nombreBeneficiarioClean,
       nombre_beneficiario: nombreBeneficiarioClean,
       beneficiario_nombre: nombreBeneficiarioClean,
@@ -1119,7 +1122,6 @@ router.post("/:id/fill-custom-template", upload.single("template"), async (req, 
       departamento: e.department || "GENERAL",
       puesto: e.position || "COLABORADOR",
       
-      // 🟢 ACTIVIDADES ENLISTADAS Y ARREGLOS REFORZADOS
       actividades_puesto: actividadesFormateadasTexto,
       actividades: actividadesFormateadasTexto,
       job_activities: actividadesFormateadasTexto,
@@ -1142,7 +1144,6 @@ router.post("/:id/fill-custom-template", upload.single("template"), async (req, 
       expediente_archivos: expedienteArchivos || "SIN DOCUMENTOS ADJUNTOS"
     };
 
-    // 🟢 MANTENER ARREGLOS Y ACTIVIDADES EN MINÚSCULAS/MAYÚSCULAS SEGÚN SU FORMATO
     const data = {};
     Object.keys(rawData).forEach(key => {
       const val = rawData[key];
@@ -1259,7 +1260,6 @@ router.post("/", async (req, res) => {
     const maternalCap = capitalize(e.last_name_maternal);
     const lastNameCap = [paternalCap, maternalCap].filter(Boolean).join(" ").trim() || capitalize(e.last_name);
 
-    // Captura flexible de actividades
     const actividadesInput = e.job_activities || e.jobActivities || e.actividades || e.actividades_puesto || null;
 
     const empResult = await client.query(
@@ -1346,7 +1346,6 @@ router.put("/:id", async (req, res) => {
       [paternalCap, maternalCap].filter(Boolean).join(" ").trim() ||
       capitalize(e.last_name);
 
-    // Captura flexible de actividades
     const actividadesInput = e.job_activities || e.jobActivities || e.actividades || e.actividades_puesto || null;
 
     const updateQuery = `
@@ -1469,7 +1468,7 @@ router.put("/:id", async (req, res) => {
       e.bank_account || null,                                                   // $51
       e.bank_clabe || null,                                                     // $52
       capitalize(e.emergency_contact_name) || null,                             // $53
-      e.emergency_contact_relationship || null,                                // $54
+      e.emergency_contact_relationship || null,                                 // $54
       e.emergency_contact_phone || null,                                        // $55
       capitalize(e.beneficiary_name) || null,                                   // $56
       e.beneficiary_relationship || null,                                       // $57
@@ -1520,7 +1519,7 @@ router.put("/:id", async (req, res) => {
   }
 });
 
-// 🟢 DELETE /api/employees/:id -> ELIMINAR CUALQUIER EMPLEADO REGISTRADO
+// DELETE /api/employees/:id -> ELIMINAR CUALQUIER EMPLEADO REGISTRADO
 router.delete("/:id", async (req, res) => {
   const { id } = req.params;
   try {
