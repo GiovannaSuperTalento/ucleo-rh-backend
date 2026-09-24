@@ -163,7 +163,7 @@ function expandirEstadoCivil(estado) {
   return mapa[clean] || clean;
 }
 
-// GET /api/employees -> Listar empleados con cast de UUIDs
+// GET /api/employees -> Listar empleados
 router.get("/", async (req, res) => {
   const { search } = req.query;
   try {
@@ -218,7 +218,7 @@ router.get("/me", async (req, res) => {
   }
 });
 
-// 🟢 CARGA MASIVA DE EXCEL CON MODO DIAGNÓSTICO Y BÚSQUEDA AUTOMÁTICA DE ENCABEZADO
+// 🟢 CARGA MASIVA DE EXCEL DINÁMICA SEGÚN COLUMNAS EXISTENTES EN POSTGRES
 router.post("/upload-excel", upload.single("file"), async (req, res) => {
   if (!req.file) {
     return res.status(400).json({ message: "No se seleccionó ningún archivo Excel." });
@@ -273,7 +273,6 @@ router.post("/upload-excel", upload.single("file"), async (req, res) => {
       return null;
     };
 
-    // 🔍 1. Buscar en qué fila están realmente los encabezados
     let headerRowNumber = 1;
     let colMap = {
       first_name: -1, last_name_paternal: -1, last_name_maternal: -1, email: -1, position: -1, department: -1,
@@ -285,7 +284,6 @@ router.post("/upload-excel", upload.single("file"), async (req, res) => {
       bank_clabe: -1, contract_type: -1, contract_start_date: -1, contract_end_date: -1, base_daily_salary: -1, sdi_salary: -1
     };
 
-    // Escanear las primeras 5 filas para encontrar la fila de títulos
     for (let r = 1; r <= Math.min(5, worksheet.rowCount); r++) {
       const candidateRow = worksheet.getRow(r);
       let foundHeaders = 0;
@@ -299,7 +297,6 @@ router.post("/upload-excel", upload.single("file"), async (req, res) => {
 
       if (foundHeaders >= 2) {
         headerRowNumber = r;
-        console.log(`💡 Fila de encabezados identificada en la FILA ${headerRowNumber}`);
         break;
       }
     }
@@ -351,16 +348,13 @@ router.post("/upload-excel", upload.single("file"), async (req, res) => {
       else if (val.includes("SDIALTA") || val.includes("SDI")) colMap.sdi_salary = colNum;
     });
 
-    console.log("🔍 Mapeo de columnas detectadas:", JSON.stringify(colMap, null, 2));
-
     worksheet.eachRow({ includeEmpty: false }, (row, rowNumber) => {
-      if (rowNumber <= headerRowNumber) return; // Saltar títulos
+      if (rowNumber <= headerRowNumber) return;
 
       let rawFirstName = colMap.first_name !== -1 ? getCellText(row, colMap.first_name) : getCellText(row, 3);
       let rawPaternal = colMap.last_name_paternal !== -1 ? getCellText(row, colMap.last_name_paternal) : getCellText(row, 4);
       let rawMaternal = colMap.last_name_maternal !== -1 ? getCellText(row, colMap.last_name_maternal) : getCellText(row, 5);
 
-      // Si por alguna razón colMap no encontró la columna, intenta por posiciones de respaldo
       if (!rawFirstName && !rawPaternal) {
         rawFirstName = getCellText(row, 1) || getCellText(row, 2) || getCellText(row, 3);
         rawPaternal = getCellText(row, 4) || getCellText(row, 5);
@@ -453,17 +447,31 @@ router.post("/upload-excel", upload.single("file"), async (req, res) => {
       }
     });
 
-    console.log(`📊 Total de filas procesables encontradas: ${rowsToProcess.length}`);
-
+    // 🟢 CONSULTA DINÁMICA DE COLUMNAS DISPONIBLES EN POSTGRESQL
     const tableColsRes = await pool.query(
       "SELECT column_name FROM information_schema.columns WHERE table_name = 'employees'"
     );
     const validCols = tableColsRes.rows.map(r => r.column_name.toLowerCase());
+    console.log("📋 Columnas reales en la tabla 'employees':", validCols.join(", "));
+
+    // Si 'hire_date' no existe pero existe 'date_of_entry' o 'fecha_alta', mapear automáticamente
+    const hireDateColName = validCols.includes("hire_date") 
+      ? "hire_date" 
+      : validCols.includes("date_of_entry") 
+      ? "date_of_entry" 
+      : validCols.includes("fecha_alta") 
+      ? "fecha_alta" 
+      : null;
 
     for (const emp of rowsToProcess) {
       try {
-        const fields = ["first_name", "department", "hire_date", "employment_status", "created_at"];
-        const values = [emp.first_name, emp.department, emp.hire_date, "activo", new Date()];
+        const fields = ["first_name", "department", "employment_status", "created_at"];
+        const values = [emp.first_name, emp.department, "activo", new Date()];
+
+        if (hireDateColName) {
+          fields.push(hireDateColName);
+          values.push(emp.hire_date);
+        }
 
         const mapField = (fieldName, val) => {
           if (validCols.includes(fieldName) && val !== undefined && val !== null && val !== "") {
@@ -718,7 +726,6 @@ router.get("/:id/files", async (req, res) => {
   }
 });
 
-// Helper interno para eliminación limpia de archivos físicos y registros
 const handleFileDelete = async (req, res) => {
   const { id, fileId } = req.params;
   const targetFileId = fileId || req.params.id;
