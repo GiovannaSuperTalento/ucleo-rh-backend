@@ -671,12 +671,20 @@ app.post(["/api/auth/reset-password", "/api/reset-password"], async (req, res) =
 
 const initDefaultAdmin = async () => {
   try {
-    // 🟢 Crear columnas una por una de forma segura
+    // 1. Declarar variables por defecto si no existen
+    const adminEmail = process.env.ADMIN_EMAIL || 'admin@empresa.com';
+    const defaultPass = process.env.ADMIN_PASSWORD || 'admin123';
+
+    // 2. Crear las columnas necesarias si aún no existen
     await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE;`);
     await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS position VARCHAR(100);`);
     await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url TEXT;`);
+    await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash TEXT;`);
 
-    // Consulta de verificación de admin existente
+    // 3. Generar hash de contraseña seguro
+    const hashedPassword = await bcrypt.hash(defaultPass, 10);
+
+    // 4. Buscar o crear el usuario administrador
     const check = await pool.query(
       `SELECT * FROM users WHERE LOWER(email) = LOWER($1)`,
       [adminEmail]
@@ -684,13 +692,16 @@ const initDefaultAdmin = async () => {
 
     if (check.rows.length === 0) {
       await pool.query(
-        `INSERT INTO users (email, ${passCol}, role, is_active, created_at) VALUES ($1, $2, 'admin', true, NOW())`,
+        `INSERT INTO users (email, password, password_hash, role, is_active, created_at) 
+         VALUES ($1, $2, $2, 'admin', true, NOW())`,
         [adminEmail, hashedPassword]
       );
       console.log(`🔒 Cuenta Administrador inicial creada: ${adminEmail} / ${defaultPass}`);
     } else {
       await pool.query(
-        `UPDATE users SET ${passCol} = $1, is_active = true, role = 'admin' WHERE LOWER(email) = LOWER($2)`,
+        `UPDATE users 
+         SET password = $1, password_hash = $1, is_active = true, role = 'admin' 
+         WHERE LOWER(email) = LOWER($2)`,
         [hashedPassword, adminEmail]
       );
       console.log(`🔑 Administrador ${adminEmail} verificado y contraseña resincronizada.`);
