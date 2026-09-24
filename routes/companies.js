@@ -118,15 +118,15 @@ function expandirEstadoCivil(estado) {
 // 1. OBTENER TODAS LAS EMPRESAS CON SUS DEPARTAMENTOS
 router.get("/", async (req, res) => {
   try {
-    const compResult = await pool.query(
-      "SELECT id, legal_name, rfc, address, COALESCE(imss_registry, registro_patronal) AS imss_registry, created_at FROM companies ORDER BY legal_name ASC"
-    ).catch(async () => {
-      return await pool.query("SELECT * FROM companies ORDER BY id ASC");
+    const compResult = await pool.query("SELECT * FROM companies ORDER BY created_at DESC").catch(async () => {
+      return await pool.query("SELECT * FROM companies");
     });
     
     const deptResult = await pool.query(
       "SELECT id::text, name, company_id::text FROM departments ORDER BY name ASC"
-    ).catch(() => ({ rows: [] }));
+    ).catch(async () => {
+      return await pool.query("SELECT id::text, name, company_id::text FROM company_departments ORDER BY name ASC").catch(() => ({ rows: [] }));
+    });
 
     const formattedCompanies = compResult.rows.map(comp => {
       const companyDepts = deptResult.rows.filter(d => String(d.company_id).trim() === String(comp.id).trim());
@@ -140,21 +140,42 @@ router.get("/", async (req, res) => {
   }
 });
 
-// 2. CREAR UNA NUEVA EMPRESA
+// 2. CREAR UNA NUEVA EMPRESA (CON VERIFICACIÓN DINÁMICA DE COLUMNAS)
 router.post("/", async (req, res) => {
   const { legal_name, name, legalName, rfc, address, imss_registry, registro_patronal, departments } = req.body;
-  const officialLegalName = legal_name || name || legalName;
-  const officialImssRegistry = imss_registry || registro_patronal || null;
+  const officialLegalName = (legal_name || name || legalName || "").trim();
+  const officialImssRegistry = (imss_registry || registro_patronal || "").trim() || null;
 
   if (!officialLegalName) {
     return res.status(400).json({ message: "El nombre legal de la empresa es obligatorio." });
   }
 
   try {
+    const colRes = await pool.query(
+      "SELECT column_name FROM information_schema.columns WHERE table_name = 'companies'"
+    );
+    const validCols = colRes.rows.map(r => r.column_name.toLowerCase());
+
+    const fields = [];
+    const values = [];
+
+    if (validCols.includes("legal_name")) { fields.push("legal_name"); values.push(officialLegalName); }
+    if (validCols.includes("name")) { fields.push("name"); values.push(officialLegalName); }
+
+    if (validCols.includes("rfc")) { fields.push("rfc"); values.push(rfc ? rfc.trim().toUpperCase() : null); }
+    if (validCols.includes("address")) { fields.push("address"); values.push(address ? address.trim() : null); }
+    
+    if (validCols.includes("imss_registry")) { fields.push("imss_registry"); values.push(officialImssRegistry); }
+    if (validCols.includes("registro_patronal")) { fields.push("registro_patronal"); values.push(officialImssRegistry); }
+
+    if (validCols.includes("created_at")) { fields.push("created_at"); values.push(new Date()); }
+
+    const colNames = fields.join(", ");
+    const placeholders = fields.map((_, i) => `$${i + 1}`).join(", ");
+
     const result = await pool.query(
-      `INSERT INTO companies (legal_name, rfc, address, imss_registry, created_at)
-       VALUES ($1, $2, $3, $4, NOW()) RETURNING *`,
-      [officialLegalName, rfc || null, address || null, officialImssRegistry]
+      `INSERT INTO companies (${colNames}) VALUES (${placeholders}) RETURNING *`,
+      values
     );
 
     const createdCompany = result.rows[0];
@@ -176,29 +197,47 @@ router.post("/", async (req, res) => {
     res.status(201).json(mapCompanyData(createdCompany, insertedDepts));
   } catch (err) {
     console.error("❌ Error al crear empresa:", err.message);
-    res.status(500).json({ message: "No se pudo crear la empresa." });
+    res.status(500).json({ message: "No se pudo crear la empresa: " + err.message });
   }
 });
 
-// 3. EDITAR / ACTUALIZAR EMPRESA
+// 3. EDITAR / ACTUALIZAR EMPRESA (DINÁMICO)
 const handleUpdateCompany = async (req, res) => {
   const { id } = req.params;
   const { legal_name, name, legalName, rfc, address, imss_registry, registro_patronal } = req.body;
-  const officialLegalName = legal_name || name || legalName;
-  const officialImssRegistry = imss_registry || registro_patronal || null;
+  const officialLegalName = (legal_name || name || legalName || "").trim();
+  const officialImssRegistry = (imss_registry || registro_patronal || "").trim() || null;
 
   if (!officialLegalName) {
     return res.status(400).json({ message: "El nombre legal de la empresa es obligatorio." });
   }
 
   try {
-    const result = await pool.query(
-      `UPDATE companies 
-       SET legal_name = $1, rfc = $2, address = $3, imss_registry = $4
-       WHERE id::text = $5::text 
-       RETURNING *`,
-      [officialLegalName, rfc || null, address || null, officialImssRegistry, id]
+    const colRes = await pool.query(
+      "SELECT column_name FROM information_schema.columns WHERE table_name = 'companies'"
     );
+    const validCols = colRes.rows.map(r => r.column_name.toLowerCase());
+
+    let updateQuery = "UPDATE companies SET ";
+    const updates = [];
+    const values = [];
+    let idx = 1;
+
+    if (validCols.includes("legal_name")) { updates.push(`legal_name = $${idx++}`); values.push(officialLegalName); }
+    if (validCols.includes("name")) { updates.push(`name = $${idx++}`); values.push(officialLegalName); }
+    if (validCols.includes("rfc")) { updates.push(`rfc = $${idx++}`); values.push(rfc ? rfc.trim().toUpperCase() : null); }
+    if (validCols.includes("address")) { updates.push(`address = $${idx++}`); values.push(address ? address.trim() : null); }
+    if (validCols.includes("imss_registry")) { updates.push(`imss_registry = $${idx++}`); values.push(officialImssRegistry); }
+    if (validCols.includes("registro_patronal")) { updates.push(`registro_patronal = $${idx++}`); values.push(officialImssRegistry); }
+
+    if (updates.length === 0) {
+      return res.status(400).json({ message: "No hay campos válidos para actualizar." });
+    }
+
+    updateQuery += updates.join(", ") + ` WHERE id::text = $${idx}::text RETURNING *`;
+    values.push(id);
+
+    const result = await pool.query(updateQuery, values);
 
     if (result.rows.length === 0) {
       return res.status(404).json({ message: "Empresa no encontrada." });
@@ -212,7 +251,7 @@ const handleUpdateCompany = async (req, res) => {
     res.json(mapCompanyData(result.rows[0], deptResult.rows));
   } catch (err) {
     console.error(`❌ Error al actualizar empresa ${id}:`, err.message);
-    res.status(500).json({ message: "No se pudo actualizar la empresa." });
+    res.status(500).json({ message: "No se pudo actualizar la empresa: " + err.message });
   }
 };
 
@@ -246,7 +285,6 @@ router.delete("/:id", async (req, res) => {
       return res.status(404).json({ message: "Empresa no encontrada." });
     }
 
-    console.log(`🗑️ Empresa con ID ${id} eliminada exitosamente.`);
     res.json({ message: "Empresa eliminada exitosamente." });
   } catch (err) {
     console.error(`❌ Error al eliminar empresa ${id}:`, err.message);
@@ -267,7 +305,13 @@ router.post("/:id/departments", async (req, res) => {
     const result = await pool.query(
       "INSERT INTO departments (name, company_id, created_at) VALUES ($1, $2, NOW()) RETURNING id::text, name, company_id::text",
       [name.trim(), id]
-    );
+    ).catch(async () => {
+      return await pool.query(
+        "INSERT INTO company_departments (name, company_id) VALUES ($1, $2) RETURNING id::text, name, company_id::text",
+        [name.trim(), id]
+      );
+    });
+
     res.status(201).json(result.rows[0]);
   } catch (err) {
     console.error(`❌ Error al crear departamento para empresa ${id}:`, err.message);
@@ -284,7 +328,9 @@ router.delete("/departments/:deptId", async (req, res) => {
       await pool.query("DELETE FROM positions WHERE department_id::text = $1::text", [deptId]);
     } catch (e) {}
 
-    await pool.query("DELETE FROM departments WHERE id::text = $1::text", [deptId]);
+    await pool.query("DELETE FROM departments WHERE id::text = $1::text", [deptId]).catch(async () => {
+      await pool.query("DELETE FROM company_departments WHERE id::text = $1::text", [deptId]);
+    });
 
     res.json({ message: "Departamento eliminado exitosamente." });
   } catch (err) {
@@ -338,7 +384,7 @@ router.post("/:id/upload-template", upload.single("template"), async (req, res) 
 // 🟢 9. POST /api/companies/:id/fill-template -> Rellenar la plantilla seleccionada por tipo y subtipo
 router.post("/:id/fill-template", async (req, res) => {
   try {
-    const { id } = req.params; // company_id
+    const { id } = req.params;
     const { document_type, sub_type, employee_id } = req.body;
 
     let queryStr = `SELECT * FROM company_templates WHERE company_id::text = $1::text AND document_type = $2`;
@@ -363,7 +409,6 @@ router.post("/:id/fill-template", async (req, res) => {
       return res.status(404).json({ message: "El archivo físico de la plantilla no existe en el servidor." });
     }
 
-    // Consultar datos del empleado con cast estandarizado de UUIDs
     const empRes = await pool.query(
       `SELECT e.*, c.legal_name AS company_name, c.rfc AS company_rfc
        FROM employees e
@@ -387,12 +432,10 @@ router.post("/:id/fill-template", async (req, res) => {
 
     const fechaIngresoFormateada = formatearFechaLarga(e.hire_date || e.contract_start_date);
 
-    // 🟢 LIMPIEZA DE BENEFICIARIO PARA EVITAR UNDEFINED
     const nombreBeneficiarioClean = (e.beneficiary_name && String(e.beneficiary_name).trim() !== "" && String(e.beneficiary_name).toLowerCase() !== "null" && String(e.beneficiary_name).toLowerCase() !== "undefined")
       ? String(e.beneficiary_name).trim()
       : "SIN REGISTRAR";
 
-    // 🟢 FORMATO DE ACTIVIDADES TIPO ORACIÓN Y ESTRUCTURA DE PÁRRAFOS INDEPENDIENTES
     const rawActividades = (e.job_activities && String(e.job_activities).trim() !== "" && String(e.job_activities).toLowerCase() !== "null" && String(e.job_activities).toLowerCase() !== "undefined")
       ? String(e.job_activities).trim()
       : "Las indicadas por la Dirección General y correspondientes a su puesto.";
@@ -433,7 +476,6 @@ router.post("/:id/fill-template", async (req, res) => {
       domicilio_personal: `${e.street || ""} #${e.exterior_number || ""} ${e.interior_number ? `INT. ${e.interior_number}` : ""}, COL. ${e.neighborhood || ""}, CP ${e.postal_code || ""}, ${e.municipality || ""}, ${e.state || ""}`.trim(),
       domicilio_fiscal: `${e.fiscal_street || e.street || ""} #${e.fiscal_exterior_number || e.exterior_number || ""} ${e.fiscal_interior_number ? `INT. ${e.fiscal_interior_number}` : ""}, COL. ${e.fiscal_neighborhood || e.neighborhood || ""}, CP ${e.fiscal_postal_code || e.postal_code || ""}, ${e.fiscal_municipality || e.municipality || ""}, ${e.fiscal_state || e.state || ""}`.trim(),
       
-      // 🟢 SALARIOS NUMÉRICOS Y SUS CORRESPONDIENTES TEXTOS EN LETRA
       salario_diario: `$${salarioDiarioNum.toFixed(2)} MXN`,
       salario_diario_num: salarioDiarioNum.toFixed(2),
       salario_diario_letra: salarioDiarioTexto,
@@ -448,7 +490,6 @@ router.post("/:id/fill-template", async (req, res) => {
 
       salario_diario_integrado: `$${salarioSdiNum.toFixed(2)} MXN`,
 
-      // 🟢 BENEFICIARIO Y ALIAS DE PLANTILLA SIN UNDEFINED
       beneficiario: nombreBeneficiarioClean,
       nombre_beneficiario: nombreBeneficiarioClean,
       beneficiario_nombre: nombreBeneficiarioClean,
@@ -467,8 +508,6 @@ router.post("/:id/fill-template", async (req, res) => {
       empresa: e.company_name || "EMPRESA NO ASIGNADA",
       departamento: e.department || "GENERAL",
       puesto: e.position || "COLABORADOR",
-      
-      // 🟢 ACTIVIDADES FORMATO PÁRRAFO INDEPENDIENTE
       actividades_puesto: actividadesFormateadasTexto,
       actividades: actividadesFormateadasTexto,
       job_activities: actividadesFormateadasTexto,
@@ -486,7 +525,6 @@ router.post("/:id/fill-template", async (req, res) => {
       fecha_termino_contrato: e.contract_end_date ? formatearFechaLarga(e.contract_end_date) : "INDEFINIDO"
     };
 
-    // 🟢 MANTENER ARREGLOS Y ACTIVIDADES SIN FORZAR A MAYÚSCULAS
     const data = {};
     Object.keys(rawData).forEach(key => {
       const val = rawData[key];
@@ -513,7 +551,6 @@ router.post("/:id/fill-template", async (req, res) => {
 
     const fileUrl = `/uploads/${outputFilename}`;
 
-    // Registrar documento generado en los archivos del empleado
     await pool.query(
       `INSERT INTO employee_files (employee_id, file_name, file_url, file_type, created_at)
        VALUES ($1, $2, $3, $4, NOW())`,
@@ -638,7 +675,6 @@ router.post("/:id/fill-template-batch", async (req, res) => {
         domicilio_personal: `${e.street || ""} #${e.exterior_number || ""} ${e.interior_number ? `INT. ${e.interior_number}` : ""}, COL. ${e.neighborhood || ""}, CP ${e.postal_code || ""}, ${e.municipality || ""}, ${e.state || ""}`.trim(),
         domicilio_fiscal: `${e.fiscal_street || e.street || ""} #${e.fiscal_exterior_number || e.exterior_number || ""} ${e.fiscal_interior_number ? `INT. ${e.fiscal_interior_number}` : ""}, COL. ${e.fiscal_neighborhood || e.neighborhood || ""}, CP ${e.fiscal_postal_code || e.postal_code || ""}, ${e.fiscal_municipality || e.municipality || ""}, ${e.fiscal_state || e.state || ""}`.trim(),
         
-        // Salarios
         salario_diario: `$${salarioDiarioNum.toFixed(2)} MXN`,
         salario_diario_num: salarioDiarioNum.toFixed(2),
         salario_diario_letra: numeroALetras(salarioDiarioNum).toUpperCase(),
@@ -653,7 +689,6 @@ router.post("/:id/fill-template-batch", async (req, res) => {
 
         salario_diario_integrado: `$${salarioSdiNum.toFixed(2)} MXN`,
 
-        // Beneficiario
         beneficiario: nombreBeneficiarioClean,
         nombre_beneficiario: nombreBeneficiarioClean,
         beneficiario_nombre: nombreBeneficiarioClean,

@@ -659,7 +659,30 @@ async function checkAndFixSchema() {
   try {
     console.log("🛠️ Verificando y creando estructura de tablas/columnas en PostgreSQL...");
 
-    // 1. Crear las columnas de apellidos desglosados, CURP, RFC, hire_date, etc.
+    // 1. Crear / Estructurar la tabla 'companies'
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS companies (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        legal_name VARCHAR(255) NOT NULL,
+        rfc VARCHAR(50),
+        address TEXT,
+        imss_registry VARCHAR(100),
+        registro_patronal VARCHAR(100),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+    
+    await pool.query(`
+      ALTER TABLE companies 
+      ADD COLUMN IF NOT EXISTS legal_name VARCHAR(255),
+      ADD COLUMN IF NOT EXISTS rfc VARCHAR(50),
+      ADD COLUMN IF NOT EXISTS address TEXT,
+      ADD COLUMN IF NOT EXISTS imss_registry VARCHAR(100),
+      ADD COLUMN IF NOT EXISTS registro_patronal VARCHAR(100);
+    `);
+    console.log("✅ Tabla 'companies' sincronizada con todas sus columnas.");
+
+    // 2. Crear / Estructurar la tabla 'employees'
     await pool.query(`
       ALTER TABLE employees 
       ADD COLUMN IF NOT EXISTS last_name_paternal VARCHAR(255),
@@ -710,7 +733,7 @@ async function checkAndFixSchema() {
     `);
     console.log("✅ Tabla 'employees' sincronizada con todas las columnas.");
 
-    // 2. Crear la tabla 'leave_requests' si no existe
+    // 3. Crear la tabla 'leave_requests' si no existe
     await pool.query(`
       CREATE TABLE IF NOT EXISTS leave_requests (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
