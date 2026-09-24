@@ -6,8 +6,8 @@ const pool = require("./db");
 const aiAssistantRouter = require("./routes/aiAssistant");
 const documentsRouter = require("./routes/documents");
 const companiesRouter = require("./routes/companies");
-const employeesRouter = require("./routes/employees"); // 🟢 IMPORTACIÓN DEL ROUTER DE EMPLEADOS
-const announcementsRouter = require("./routes/announcements"); // 🟢 IMPORTACIÓN DEL ROUTER DE COMUNICADOS
+const employeesRouter = require("./routes/employees");
+const announcementsRouter = require("./routes/announcements");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const JWT_SECRET = process.env.JWT_SECRET || "nucleo_rh_secret_key_2026";
@@ -17,7 +17,7 @@ const nodemailer = require("nodemailer");
 const app = express();
 
 const transporter = nodemailer.createTransport({
-  service: "gmail", // Puedes cambiarlo por tu servidor SMTP
+  service: "gmail",
   auth: {
     user: process.env.EMAIL_USER || "tu_correo@gmail.com",
     pass: process.env.EMAIL_PASS || "tu_contraseña_de_aplicacion"
@@ -27,7 +27,6 @@ const transporter = nodemailer.createTransport({
 // 3. MIDDLEWARES
 app.use(cors());
 
-// 🟢 PERMITIR PAYLOADS DE HASTA 50MB (Soporte para imágenes en Base64)
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ limit: "50mb", extended: true }));
 
@@ -35,19 +34,11 @@ app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 app.use("/generated-docs", express.static(path.join(__dirname, "generated-docs")));
 
 app.use("/api/social-publications", require("./routes/social"));
-// RUTA PARA EL ASISTENTE VIRTUAL (NúcleoBot)
 app.use("/api", aiAssistantRouter);
-
-// Router de empresas
 app.use("/api/companies", companiesRouter);
-
-// 🟢 ENRUTADOR DE EMPLEADOS COMPLETO
 app.use("/api/employees", employeesRouter);
-
-// 🟢 ENRUTADOR DE COMUNICADOS Y ANUNCIOS
 app.use("/api/announcements", announcementsRouter);
 
-// Adaptador para estandarizar los datos del frontend antes de pasar al router de documentos
 app.use("/api/documents/generate", (req, res, next) => {
   if (req.method === "POST" && req.body) {
     req.body.employee_id = req.body.employee_id || req.body.employeeId || req.body.id;
@@ -56,12 +47,8 @@ app.use("/api/documents/generate", (req, res, next) => {
   next();
 });
 
-// Vinculación directa con tu módulo de documentos
 app.use("/api/documents", documentsRouter);
 
-// ============================================================================
-// 🟢 RUTAS ADICIONALES PARA PLANTILLAS Y OPCIONES MULTI-FORMATO
-// ============================================================================
 app.get("/api/templates/multi-form-options", (req, res) => {
   res.json([
     "Vacaciones",
@@ -154,14 +141,10 @@ app.put("/api/leaves/requests/:id/review", async (req, res) => {
   }
 });
 
-// Endpoint contador para evitar errores 404 en la consola del chat
 app.get("/api/chat/unread-count", (req, res) => {
   res.json({ count: 0, unreadCount: 0 });
 });
 
-// ============================================================================
-// 🟢 HELPER PARA DETECTAR DINÁMICAMENTE LA COLUMNA DE PASSWORD EN USERS
-// ============================================================================
 const getPasswordColumnName = async () => {
   try {
     const colResult = await pool.query(
@@ -178,9 +161,6 @@ const getPasswordColumnName = async () => {
   }
 };
 
-// ============================================================================
-// 🟢 MAPEADOR AUXILIAR RESILIENTE CON AVATAR EN BASE64
-// ============================================================================
 const mapEmployeeData = (emp) => {
   if (!emp) return null;
  
@@ -243,9 +223,6 @@ app.get("/api/organigram", async (req, res) => {
   }
 });
 
-// ============================================================================
-// 🟢 ENDPOINTS DE NOTAS Y POST-ITS (TABLA: tasks)
-// ============================================================================
 app.get("/api/notes", async (req, res) => {
   try {
     const result = await pool.query(
@@ -275,7 +252,6 @@ app.post("/api/notes", async (req, res) => {
         due_date || null
       ]
     );
-    console.log("✅ NOTA GUARDADA EN POSTGRESQL:", result.rows[0].title);
     res.status(201).json(result.rows[0]);
   } catch (err) {
     console.error("❌ ERROR AL GUARDAR NOTA:", err.message);
@@ -287,7 +263,6 @@ app.delete("/api/notes/:id", async (req, res) => {
   const { id } = req.params;
   try {
     await pool.query("DELETE FROM tasks WHERE id = $1::uuid", [id]);
-    console.log(`🗑️ Nota con ID ${id} eliminada de PostgreSQL`);
     res.json({ message: "Nota eliminada exitosamente." });
   } catch (err) {
     console.error("❌ Error al eliminar nota:", err.message);
@@ -295,9 +270,6 @@ app.delete("/api/notes/:id", async (req, res) => {
   }
 });
 
-// ============================================================================
-// 🟢 ENDPOINTS DE CALENDARIO (TABLA: leave_requests)
-// ============================================================================
 app.get("/api/calendar-events", async (req, res) => {
   try {
     const result = await pool.query(
@@ -324,17 +296,12 @@ app.post("/api/calendar-events", async (req, res) => {
        RETURNING *`,
       [eventType, startDateVal, endDateVal, statusVal]
     );
-    console.log("✅ EVENTO REGISTRADO EN POSTGRESQL:", result.rows[0]);
     res.status(201).json(result.rows[0]);
   } catch (err) {
     console.error("❌ Error al guardar evento:", err.message);
     res.status(500).json({ error: "Error al agendar evento." });
   }
 });
-
-// ============================================================================
-// 🟢 ENDPOINTS DE MENSAJERÍA Y CHAT ENTRE COLABORADORES
-// ============================================================================
 
 app.get(["/api/chat/users", "/api/chat/contacts"], async (req, res) => {
   try {
@@ -357,7 +324,6 @@ app.get("/api/chat/messages", async (req, res) => {
 
     res.json(result.rows);
   } catch (err) {
-    console.error("❌ Error al consultar historial general de chat:", err.message);
     res.json([]);
   }
 });
@@ -374,7 +340,6 @@ app.get("/api/chat/messages/:receiverId", async (req, res) => {
 
     res.json(result.rows);
   } catch (err) {
-    console.error(`❌ Error al consultar chat con usuario ${receiverId}:`, err.message);
     res.json([]);
   }
 });
@@ -401,17 +366,11 @@ app.post("/api/chat/messages", async (req, res) => {
       };
     });
 
-    console.log("💬 Mensaje enviado exitosamente:", content);
     res.status(201).json(result.rows[0]);
   } catch (err) {
-    console.error("❌ Error al enviar mensaje:", err.message);
     res.status(500).json({ error: "Error al enviar el mensaje." });
   }
 });
-
-// ============================================================================
-// 🟢 SISTEMA DEFINITIVO DE REGISTRO Y GESTIÓN DE USUARIOS
-// ============================================================================
 
 const handleRegisterUser = async (req, res) => {
   const { email, password, role } = req.body;
@@ -436,7 +395,6 @@ const handleRegisterUser = async (req, res) => {
                    VALUES ($1, $2, $3, true, NOW()) RETURNING id::text, email, role, is_active`;
     const result = await pool.query(query, [cleanEmail, hashedPassword, userRole]);
 
-    console.log("✅ Usuario registrado exitosamente:", cleanEmail);
     res.status(201).json(result.rows[0]);
   } catch (err) {
     console.error("❌ Error en registro de usuario:", err.message);
@@ -453,7 +411,6 @@ app.get("/api/users", async (req, res) => {
     );
     res.json(result.rows);
   } catch (err) {
-    console.error("❌ Error al consultar usuarios:", err.message);
     res.status(500).json([]);
   }
 });
@@ -483,7 +440,6 @@ app.put("/api/users/:id", async (req, res) => {
 
     res.json(result.rows[0]);
   } catch (err) {
-    console.error(`❌ Error al actualizar usuario ${id}:`, err.message);
     res.status(500).json({ message: "No se pudo actualizar el usuario." });
   }
 });
@@ -494,14 +450,9 @@ app.delete("/api/users/:id", async (req, res) => {
     await pool.query("DELETE FROM users WHERE id::text = $1::text", [id]);
     res.json({ message: "Usuario eliminado exitosamente." });
   } catch (err) {
-    console.error(`❌ Error al eliminar usuario ${id}:`, err.message);
     res.status(500).json({ message: "Error al eliminar usuario." });
   }
 });
-
-// ============================================================================
-// 🟢 ENDPOINTS DE AUTENTICACIÓN Y LOGIN (RESILIENTE CON COLUMNA DINÁMICA)
-// ============================================================================
 
 const handleLogin = async (req, res) => {
   const { email, password } = req.body;
@@ -587,10 +538,6 @@ app.get(["/api/auth/me", "/api/me"], async (req, res) => {
   }
 });
 
-// ============================================================================
-// 🟢 RECUPERACIÓN Y CAMBIO DE CONTRASEÑA VÍA EMAIL / CONSOLA
-// ============================================================================
-
 app.post(["/api/auth/forgot-password", "/api/forgot-password"], async (req, res) => {
   const { email } = req.body;
   if (!email) return res.status(400).json({ message: "El correo es obligatorio." });
@@ -631,16 +578,14 @@ app.post(["/api/auth/forgot-password", "/api/forgot-password"], async (req, res)
 
     try {
       await transporter.sendMail(mailOptions);
-      console.log(`📧 Correo de recuperación enviado a: ${user.email}`);
     } catch (mailErr) {
       console.warn("⚠️ No se pudo enviar por SMTP. LINK DE RECUPERACIÓN EN CONSOLA:", resetLink);
     }
 
     res.json({
-      message: "Se ha enviado un enlace de recuperación a tu correo electrónico. Revisa tu bandeja de entrada o la carpeta de Spam."
+      message: "Se ha enviado un enlace de recuperación a tu correo electrónico."
     });
   } catch (err) {
-    console.error("❌ Error al procesar recuperación:", err.message);
     res.status(500).json({ message: "No se pudo procesar la solicitud de recuperación." });
   }
 });
@@ -665,10 +610,8 @@ app.post(["/api/auth/reset-password", "/api/reset-password"], async (req, res) =
       [hashedPassword, decoded.id]
     );
 
-    console.log(`✅ Contraseña actualizada exitosamente para usuario ID: ${decoded.id}`);
-    res.json({ message: "Contraseña actualizada exitosamente. Ya puedes iniciar sesión." });
+    res.json({ message: "Contraseña actualizada exitosamente." });
   } catch (err) {
-    console.error("❌ Error al restablecer contraseña:", err.message);
     res.status(400).json({ message: "El enlace de recuperación es inválido o ha expirado." });
   }
 });
@@ -696,7 +639,6 @@ const initDefaultAdmin = async () => {
          VALUES ($1, $2, $2, 'admin', true, NOW())`,
         [adminEmail, hashedPassword]
       );
-      console.log(`🔒 Cuenta Administrador inicial creada: ${adminEmail} / ${defaultPass}`);
     } else {
       await pool.query(
         `UPDATE users 
@@ -704,7 +646,6 @@ const initDefaultAdmin = async () => {
          WHERE LOWER(email) = LOWER($2)`,
         [hashedPassword, adminEmail]
       );
-      console.log(`🔑 Administrador ${adminEmail} verificado y contraseña resincronizada.`);
     }
   } catch (err) {
     console.error("⚠️ Error en inicialización del Admin:", err.message);
@@ -712,13 +653,13 @@ const initDefaultAdmin = async () => {
 };
 
 // ============================================================================
-// 🟢 MIGRACIÓN AUTOMÁTICA DE ESQUEMA PARA EVITAR ERRORES DE COLUMNAS EN RAILWAY
+// 🟢 MIGRACIÓN AUTOMÁTICA DE ESQUEMA EN POSTGRESQL (CRUCIAL PARA ESTRUCTURA)
 // ============================================================================
 async function checkAndFixSchema() {
   try {
-    console.log("🛠️ Verificando y corrigiendo esquema de PostgreSQL...");
+    console.log("🛠️ Verificando y creando estructura de tablas/columnas en PostgreSQL...");
 
-    // 1. Asegurar columnas faltantes en 'employees'
+    // 1. Crear la columna hire_date, street, y todas las columnas del expediente
     await pool.query(`
       ALTER TABLE employees 
       ADD COLUMN IF NOT EXISTS hire_date DATE,
@@ -755,7 +696,7 @@ async function checkAndFixSchema() {
       ADD COLUMN IF NOT EXISTS beneficiary_relationship VARCHAR(100),
       ADD COLUMN IF NOT EXISTS beneficiary_phone VARCHAR(50);
     `);
-    console.log("✅ Tabla 'employees' actualizada con todas las columnas necesarias.");
+    console.log("✅ Tabla 'employees' sincronizada con todas las columnas.");
 
     // 2. Crear la tabla 'leave_requests' si no existe
     await pool.query(`
@@ -772,10 +713,10 @@ async function checkAndFixSchema() {
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
     `);
-    console.log("✅ Tabla 'leave_requests' verificada/creada.");
+    console.log("✅ Tabla 'leave_requests' creada/verificada.");
 
   } catch (err) {
-    console.error("❌ Error durante la verificación del esquema:", err.message);
+    console.error("❌ Error en la verificación de esquema:", err.message);
   }
 }
 

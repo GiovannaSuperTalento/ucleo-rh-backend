@@ -163,7 +163,7 @@ function expandirEstadoCivil(estado) {
   return mapa[clean] || clean;
 }
 
-// GET /api/employees -> Listar empleados
+// GET /api/employees -> Listar empleados con cast de UUIDs
 router.get("/", async (req, res) => {
   const { search } = req.query;
   try {
@@ -218,15 +218,11 @@ router.get("/me", async (req, res) => {
   }
 });
 
-// 🟢 CARGA MASIVA DE EXCEL DINÁMICA SEGÚN COLUMNAS EXISTENTES EN POSTGRES
+// 🟢 CARGA MASIVA DE EXCEL MAPEDA A TU PLANTILLA OFICIAL
 router.post("/upload-excel", upload.single("file"), async (req, res) => {
   if (!req.file) {
     return res.status(400).json({ message: "No se seleccionó ningún archivo Excel." });
   }
-
-  console.log(`\n========================================`);
-  console.log(`📄 INICIANDO IMPORTACIÓN DE EXCEL: ${req.file.originalname}`);
-  console.log(`========================================`);
 
   try {
     const workbook = new Workbook.Workbook();
@@ -236,8 +232,6 @@ router.post("/upload-excel", upload.single("file"), async (req, res) => {
     if (!worksheet) {
       throw new Error("El archivo Excel no contiene hojas de trabajo válidas.");
     }
-
-    console.log(`📌 Hoja detectada: "${worksheet.name}" | Total filas detectadas: ${worksheet.rowCount}`);
 
     let insertedCount = 0;
     const errors = [];
@@ -273,55 +267,39 @@ router.post("/upload-excel", upload.single("file"), async (req, res) => {
       return null;
     };
 
+    // Mapeo dinámico por coincidencia o fallback exacto a las 42 columnas oficiales
     let headerRowNumber = 1;
     let colMap = {
-      first_name: -1, last_name_paternal: -1, last_name_maternal: -1, email: -1, position: -1, department: -1,
-      hire_date: -1, curp: -1, rfc: -1, nss: -1, birth_date: -1, birth_place_municipality: -1, birth_place_state: -1,
-      gender: -1, marital_status: -1, education_level: -1, last_grade: -1, street: -1, exterior_number: -1,
-      interior_number: -1, neighborhood: -1, postal_code: -1, municipality: -1, state: -1, phone: -1, mobile_phone: -1,
-      emergency_contact_name: -1, emergency_contact_relationship: -1, emergency_contact_phone: -1, payroll_type: -1,
-      has_infonavit_credit: -1, infonavit_credit_number: -1, infonavit_discount_value: -1, bank_name: -1, bank_account: -1,
-      bank_clabe: -1, contract_type: -1, contract_start_date: -1, contract_end_date: -1, base_daily_salary: -1, sdi_salary: -1
+      company_name: 1, nss: 2, first_name: 3, last_name_paternal: 4, last_name_maternal: 5,
+      curp: 6, base_daily_salary: 7, sdi_salary: 8, hire_date: 9, department: 10,
+      position: 11, rfc: 12, birth_date: 13, birth_place_municipality: 14, birth_place_state: 15,
+      gender: 16, marital_status: 17, education_level: 18, last_grade: 19, street: 20,
+      exterior_number: 21, interior_number: 22, neighborhood: 23, postal_code: 24, municipality: 25,
+      state: 26, phone: 27, mobile_phone: 28, emergency_contact_name: 29, emergency_contact_relationship: 30,
+      emergency_contact_phone: 31, payroll_type: 32, has_infonavit_credit: 33, infonavit_credit_number: 34,
+      infonavit_discount_value: 35, bank_name: 36, bank_account: 37, bank_clabe: 38, email: 39,
+      contract_type: 40, contract_start_date: 41, contract_end_date: 42
     };
 
-    for (let r = 1; r <= Math.min(5, worksheet.rowCount); r++) {
-      const candidateRow = worksheet.getRow(r);
-      let foundHeaders = 0;
-
-      candidateRow.eachCell({ includeEmpty: false }, (cell, colNum) => {
-        const val = cleanHeader(getCellText(candidateRow, colNum));
-        if (val.includes("NOMBRE") || val.includes("PATERNO") || val.includes("RFC") || val.includes("CURP") || val.includes("EMPRESA") || val.includes("PUESTO")) {
-          foundHeaders++;
-        }
-      });
-
-      if (foundHeaders >= 2) {
-        headerRowNumber = r;
-        break;
-      }
-    }
-
-    const headerRow = worksheet.getRow(headerRowNumber);
+    // Escanear encabezados dinámicamente si los nombres coinciden
+    const headerRow = worksheet.getRow(1);
     headerRow.eachCell({ includeEmpty: false }, (cell, colNum) => {
       const val = cleanHeader(getCellText(headerRow, colNum));
 
-      if (val.includes("NOMBRE") && !val.includes("EMPRESA") && !val.includes("EMERG") && !val.includes("PADRE") && !val.includes("BENEF")) colMap.first_name = colNum;
+      if (val.includes("EMPRESA")) colMap.company_name = colNum;
+      else if (val.includes("NOMBRE")) colMap.first_name = colNum;
       else if (val.includes("PATERNO") || val.includes("APATERNO")) colMap.last_name_paternal = colNum;
       else if (val.includes("MATERNO") || val.includes("AMATERNO")) colMap.last_name_maternal = colNum;
-      else if (val.includes("CORREO") || val.includes("EMAIL") || val.includes("TRABAJADOR")) colMap.email = colNum;
-      else if (val.includes("PUESTO")) colMap.position = colNum;
-      else if (val.includes("DEPTO") || val.includes("DEPARTAMENTO")) colMap.department = colNum;
-      else if (val.includes("ALTA") || val.includes("FDEALTA") || val.includes("FECHAALTA")) colMap.hire_date = colNum;
       else if (val.includes("CURP")) colMap.curp = colNum;
       else if (val.includes("RFC")) colMap.rfc = colNum;
-      else if (val.includes("IMSS") || val.includes("NSS") || val.includes("SEGURO")) colMap.nss = colNum;
-      else if (val.includes("FECHANAC") || val.includes("NACIMIENTO")) colMap.birth_date = colNum;
+      else if (val.includes("IMSS") || val.includes("NSS")) colMap.nss = colNum;
+      else if (val.includes("FECHANAC") || val.includes("NACIMIENTO") || val.includes("DDMM")) colMap.birth_date = colNum;
       else if (val.includes("LUGARNAC") || val.includes("MUNICIPIONAC")) colMap.birth_place_municipality = colNum;
       else if (val.includes("ESTADONAC")) colMap.birth_place_state = colNum;
       else if (val.includes("SEXO") || val.includes("GENERO")) colMap.gender = colNum;
       else if (val.includes("EDOCIVIL") || val.includes("ESTADOCIVIL")) colMap.marital_status = colNum;
       else if (val.includes("ESCOLARIDAD")) colMap.education_level = colNum;
-      else if (val.includes("ULTIMOGRADO") || val.includes("GRADO")) colMap.last_grade = colNum;
+      else if (val.includes("GRADO")) colMap.last_grade = colNum;
       else if (val === "CALLE") colMap.street = colNum;
       else if (val.includes("EXTERIOR") || val.includes("NUMEROSIN") || val.includes("EXT")) colMap.exterior_number = colNum;
       else if (val.includes("INTERIOR") || val.includes("INT")) colMap.interior_number = colNum;
@@ -330,7 +308,7 @@ router.post("/upload-excel", upload.single("file"), async (req, res) => {
       else if (val === "MUNICIPIO") colMap.municipality = colNum;
       else if (val.includes("ESTADO") && !val.includes("NAC") && !val.includes("CIVIL")) colMap.state = colNum;
       else if (val.includes("TEL1") || val.includes("TELEFONO")) colMap.phone = colNum;
-      else if (val.includes("CELULAR") || val.includes("MOVIL")) colMap.mobile_phone = colNum;
+      else if (val.includes("CELULAR")) colMap.mobile_phone = colNum;
       else if (val.includes("CONTACTOEMERG") || val.includes("EMERGENCIA")) colMap.emergency_contact_name = colNum;
       else if (val.includes("RELACION") && val.includes("EMERG")) colMap.emergency_contact_relationship = colNum;
       else if (val.includes("TELEMERG")) colMap.emergency_contact_phone = colNum;
@@ -341,93 +319,93 @@ router.post("/upload-excel", upload.single("file"), async (req, res) => {
       else if (val.includes("BANCO")) colMap.bank_name = colNum;
       else if (val.includes("CUENTA") && !val.includes("CLABE")) colMap.bank_account = colNum;
       else if (val.includes("CLABE")) colMap.bank_clabe = colNum;
-      else if (val.includes("CONTRATO")) colMap.contract_type = colNum;
-      else if (val.includes("INICIOCONTRATO")) colMap.contract_start_date = colNum;
-      else if (val.includes("TERMINOCONTRATO")) colMap.contract_end_date = colNum;
-      else if (val.includes("SDALTA") || val.includes("SALARIODIARIO")) colMap.base_daily_salary = colNum;
-      else if (val.includes("SDIALTA") || val.includes("SDI")) colMap.sdi_salary = colNum;
+      else if (val.includes("CORREO") || val.includes("EMAIL") || val.includes("TRABAJADOR")) colMap.email = colNum;
+      else if (val.includes("CONTRATO") && !val.includes("INICIO") && !val.includes("TERMINO")) colMap.contract_type = colNum;
+      else if (val.includes("INICIODECONTRATO")) colMap.contract_start_date = colNum;
+      else if (val.includes("TERMINODECONTRATO")) colMap.contract_end_date = colNum;
+      else if (val.includes("SDALTA")) colMap.base_daily_salary = colNum;
+      else if (val.includes("SDIALTA")) colMap.sdi_salary = colNum;
+      else if (val.includes("ALTA") || val.includes("FDEALTA")) colMap.hire_date = colNum;
+      else if (val.includes("DEPTO") || val.includes("DEPARTAMENTO")) colMap.department = colNum;
+      else if (val.includes("PUESTO")) colMap.position = colNum;
     });
 
     worksheet.eachRow({ includeEmpty: false }, (row, rowNumber) => {
-      if (rowNumber <= headerRowNumber) return;
+      if (rowNumber === 1) return;
 
-      let rawFirstName = colMap.first_name !== -1 ? getCellText(row, colMap.first_name) : getCellText(row, 3);
-      let rawPaternal = colMap.last_name_paternal !== -1 ? getCellText(row, colMap.last_name_paternal) : getCellText(row, 4);
-      let rawMaternal = colMap.last_name_maternal !== -1 ? getCellText(row, colMap.last_name_maternal) : getCellText(row, 5);
-
-      if (!rawFirstName && !rawPaternal) {
-        rawFirstName = getCellText(row, 1) || getCellText(row, 2) || getCellText(row, 3);
-        rawPaternal = getCellText(row, 4) || getCellText(row, 5);
-      }
+      const rawFirstName = getCellText(row, colMap.first_name);
+      const rawPaternal = getCellText(row, colMap.last_name_paternal);
+      const rawMaternal = getCellText(row, colMap.last_name_maternal);
 
       const first_name = capitalize(rawFirstName);
       const last_name_paternal = capitalize(rawPaternal);
       const last_name_maternal = capitalize(rawMaternal);
       const last_name = [last_name_paternal, last_name_maternal].filter(Boolean).join(" ").trim() || last_name_paternal || "N/A";
 
-      const personal_email = colMap.email !== -1 ? getCellText(row, colMap.email) : getCellText(row, 39);
-      const position = capitalize(colMap.position !== -1 ? getCellText(row, colMap.position) : getCellText(row, 11));
-      const department = capitalize(colMap.department !== -1 ? getCellText(row, colMap.department) : getCellText(row, 10));
+      const company_name = getCellText(row, colMap.company_name);
+      const personal_email = getCellText(row, colMap.email);
+      const position = capitalize(getCellText(row, colMap.position));
+      const department = capitalize(getCellText(row, colMap.department));
 
-      const rawCurp = colMap.curp !== -1 ? getCellText(row, colMap.curp) : getCellText(row, 6);
-      const rawRfc = colMap.rfc !== -1 ? getCellText(row, colMap.rfc) : getCellText(row, 12);
-      const rawNss = colMap.nss !== -1 ? getCellText(row, colMap.nss) : getCellText(row, 2);
+      const rawCurp = getCellText(row, colMap.curp);
+      const rawRfc = getCellText(row, colMap.rfc);
+      const rawNss = getCellText(row, colMap.nss);
 
       const curp = rawCurp ? rawCurp.replace(/[^a-zA-Z0-9]/g, "").toUpperCase().slice(0, 18) : null;
       const rfc = rawRfc ? rawRfc.replace(/[^a-zA-Z0-9]/g, "").toUpperCase().slice(0, 13) : null;
       const nss = rawNss ? rawNss.replace(/\D/g, "").slice(0, 11) : null;
 
-      const birth_date = parseExcelDate(colMap.birth_date !== -1 ? row.getCell(colMap.birth_date).value : row.getCell(13).value);
-      const birth_place_municipality = capitalize(colMap.birth_place_municipality !== -1 ? getCellText(row, colMap.birth_place_municipality) : getCellText(row, 14));
-      const birth_place_state = (colMap.birth_place_state !== -1 ? getCellText(row, colMap.birth_place_state) : getCellText(row, 15)).toUpperCase();
+      const birth_date = parseExcelDate(row.getCell(colMap.birth_date).value);
+      const birth_place_municipality = capitalize(getCellText(row, colMap.birth_place_municipality));
+      const birth_place_state = getCellText(row, colMap.birth_place_state).toUpperCase();
       
-      let rawGender = (colMap.gender !== -1 ? getCellText(row, colMap.gender) : getCellText(row, 16)).toUpperCase();
+      let rawGender = getCellText(row, colMap.gender).toUpperCase();
       const gender = rawGender.startsWith("M") && !rawGender.includes("FEM") ? "Masculino" : rawGender.startsWith("F") ? "Femenino" : rawGender;
 
-      const marital_status = (colMap.marital_status !== -1 ? getCellText(row, colMap.marital_status) : getCellText(row, 17)).toUpperCase();
-      const education_level = capitalize(colMap.education_level !== -1 ? getCellText(row, colMap.education_level) : getCellText(row, 18));
-      const last_grade = capitalize(colMap.last_grade !== -1 ? getCellText(row, colMap.last_grade) : getCellText(row, 19));
+      const marital_status = getCellText(row, colMap.marital_status).toUpperCase();
+      const education_level = capitalize(getCellText(row, colMap.education_level));
+      const last_grade = capitalize(getCellText(row, colMap.last_grade));
 
-      const street = capitalize(colMap.street !== -1 ? getCellText(row, colMap.street) : getCellText(row, 20));
-      const exterior_number = colMap.exterior_number !== -1 ? getCellText(row, colMap.exterior_number) : getCellText(row, 21);
-      const interior_number = colMap.interior_number !== -1 ? getCellText(row, colMap.interior_number) : getCellText(row, 22);
-      const neighborhood = capitalize(colMap.neighborhood !== -1 ? getCellText(row, colMap.neighborhood) : getCellText(row, 23));
-      const postal_code = colMap.postal_code !== -1 ? getCellText(row, colMap.postal_code) : getCellText(row, 24);
-      const municipality = capitalize(colMap.municipality !== -1 ? getCellText(row, colMap.municipality) : getCellText(row, 25));
-      const state = (colMap.state !== -1 ? getCellText(row, colMap.state) : getCellText(row, 26)).toUpperCase();
+      const street = capitalize(getCellText(row, colMap.street));
+      const exterior_number = getCellText(row, colMap.exterior_number);
+      const interior_number = getCellText(row, colMap.interior_number);
+      const neighborhood = capitalize(getCellText(row, colMap.neighborhood));
+      const postal_code = getCellText(row, colMap.postal_code);
+      const municipality = capitalize(getCellText(row, colMap.municipality));
+      const state = getCellText(row, colMap.state).toUpperCase();
 
-      const phone = colMap.phone !== -1 ? getCellText(row, colMap.phone) : getCellText(row, 27);
-      const mobile_phone = colMap.mobile_phone !== -1 ? getCellText(row, colMap.mobile_phone) : getCellText(row, 28);
+      const phone = getCellText(row, colMap.phone);
+      const mobile_phone = getCellText(row, colMap.mobile_phone);
 
-      const emergency_contact_name = capitalize(colMap.emergency_contact_name !== -1 ? getCellText(row, colMap.emergency_contact_name) : getCellText(row, 29));
-      const emergency_contact_relationship = capitalize(colMap.emergency_contact_relationship !== -1 ? getCellText(row, colMap.emergency_contact_relationship) : getCellText(row, 30));
-      const emergency_contact_phone = colMap.emergency_contact_phone !== -1 ? getCellText(row, colMap.emergency_contact_phone) : getCellText(row, 31);
+      const emergency_contact_name = capitalize(getCellText(row, colMap.emergency_contact_name));
+      const emergency_contact_relationship = capitalize(getCellText(row, colMap.emergency_contact_relationship));
+      const emergency_contact_phone = getCellText(row, colMap.emergency_contact_phone);
 
-      let rawPayroll = (colMap.payroll_type !== -1 ? getCellText(row, colMap.payroll_type) : getCellText(row, 32)).toUpperCase();
+      let rawPayroll = getCellText(row, colMap.payroll_type).toUpperCase();
       const payroll_type = rawPayroll.includes("SEM") ? "SEM" : "QUI";
 
-      const has_infonavit_credit = (colMap.has_infonavit_credit !== -1 ? getCellText(row, colMap.has_infonavit_credit) : getCellText(row, 33)).toUpperCase().includes("SI") ? "SI" : "NO";
-      const infonavit_credit_number = colMap.infonavit_credit_number !== -1 ? getCellText(row, colMap.infonavit_credit_number) : getCellText(row, 34);
-      const infonavit_discount_value = colMap.infonavit_discount_value !== -1 ? getCellText(row, colMap.infonavit_discount_value) : getCellText(row, 35);
+      const has_infonavit_credit = getCellText(row, colMap.has_infonavit_credit).toUpperCase().includes("SI") ? "SI" : "NO";
+      const infonavit_credit_number = getCellText(row, colMap.infonavit_credit_number);
+      const infonavit_discount_value = getCellText(row, colMap.infonavit_discount_value);
 
-      const bank_name = colMap.bank_name !== -1 ? getCellText(row, colMap.bank_name) : getCellText(row, 36);
-      const bank_account = colMap.bank_account !== -1 ? getCellText(row, colMap.bank_account) : getCellText(row, 37);
-      const bank_clabe = colMap.bank_clabe !== -1 ? getCellText(row, colMap.bank_clabe) : getCellText(row, 38);
+      const bank_name = getCellText(row, colMap.bank_name);
+      const bank_account = getCellText(row, colMap.bank_account);
+      const bank_clabe = getCellText(row, colMap.bank_clabe);
 
-      const contract_type = colMap.contract_type !== -1 ? getCellText(row, colMap.contract_type) : getCellText(row, 40);
-      const contract_start_date = parseExcelDate(colMap.contract_start_date !== -1 ? row.getCell(colMap.contract_start_date).value : row.getCell(41).value);
-      const contract_end_date = parseExcelDate(colMap.contract_end_date !== -1 ? row.getCell(colMap.contract_end_date).value : row.getCell(42).value);
+      const contract_type = getCellText(row, colMap.contract_type);
+      const contract_start_date = parseExcelDate(row.getCell(colMap.contract_start_date).value);
+      const contract_end_date = parseExcelDate(row.getCell(colMap.contract_end_date).value);
 
-      const base_daily_salary = colMap.base_daily_salary !== -1 ? getCellText(row, colMap.base_daily_salary) : getCellText(row, 7);
-      const sdi_salary = colMap.sdi_salary !== -1 ? getCellText(row, colMap.sdi_salary) : getCellText(row, 8);
-
-      let hire_date = parseExcelDate(colMap.hire_date !== -1 ? row.getCell(colMap.hire_date).value : row.getCell(9).value);
+      const base_daily_salary = getCellText(row, colMap.base_daily_salary);
+      const sdi_salary = getCellText(row, colMap.sdi_salary);
+      let hire_date = parseExcelDate(row.getCell(colMap.hire_date).value);
 
       const cleanTestStr = (first_name + " " + last_name_paternal).toUpperCase();
       const isHeaderRow = cleanTestStr.includes("NOMBRE") || cleanTestStr.includes("PATERNO") || cleanTestStr.includes("EMPRESA");
 
       if ((first_name || last_name_paternal || personal_email || curp || rfc) && !isHeaderRow) {
         rowsToProcess.push({
+          company_name,
           first_name: first_name || "Colaborador",
           last_name_paternal: last_name_paternal || null,
           last_name_maternal: last_name_maternal || null,
@@ -447,31 +425,16 @@ router.post("/upload-excel", upload.single("file"), async (req, res) => {
       }
     });
 
-    // 🟢 CONSULTA DINÁMICA DE COLUMNAS DISPONIBLES EN POSTGRESQL
+    // Obtener columnas reales de la tabla 'employees'
     const tableColsRes = await pool.query(
       "SELECT column_name FROM information_schema.columns WHERE table_name = 'employees'"
     );
     const validCols = tableColsRes.rows.map(r => r.column_name.toLowerCase());
-    console.log("📋 Columnas reales en la tabla 'employees':", validCols.join(", "));
-
-    // Si 'hire_date' no existe pero existe 'date_of_entry' o 'fecha_alta', mapear automáticamente
-    const hireDateColName = validCols.includes("hire_date") 
-      ? "hire_date" 
-      : validCols.includes("date_of_entry") 
-      ? "date_of_entry" 
-      : validCols.includes("fecha_alta") 
-      ? "fecha_alta" 
-      : null;
 
     for (const emp of rowsToProcess) {
       try {
         const fields = ["first_name", "department", "employment_status", "created_at"];
         const values = [emp.first_name, emp.department, "activo", new Date()];
-
-        if (hireDateColName) {
-          fields.push(hireDateColName);
-          values.push(emp.hire_date);
-        }
 
         const mapField = (fieldName, val) => {
           if (validCols.includes(fieldName) && val !== undefined && val !== null && val !== "") {
@@ -485,6 +448,7 @@ router.post("/upload-excel", upload.single("file"), async (req, res) => {
         mapField("last_name_maternal", emp.last_name_maternal);
         mapField("personal_email", emp.personal_email);
         mapField("position", emp.position);
+        mapField("hire_date", emp.hire_date);
         mapField("curp", emp.curp);
         mapField("rfc", emp.rfc);
         mapField("nss", emp.nss);
@@ -495,6 +459,8 @@ router.post("/upload-excel", upload.single("file"), async (req, res) => {
         mapField("marital_status", emp.marital_status);
         mapField("education_level", emp.education_level);
         mapField("last_grade", emp.last_grade);
+
+        // 🟢 Domicilio Personal
         mapField("street", emp.street);
         mapField("exterior_number", emp.exterior_number);
         mapField("interior_number", emp.interior_number);
@@ -502,6 +468,16 @@ router.post("/upload-excel", upload.single("file"), async (req, res) => {
         mapField("postal_code", emp.postal_code);
         mapField("municipality", emp.municipality);
         mapField("state", emp.state);
+
+        // 🟢 Domicilio Fiscal (Constancia de Situación Fiscal)
+        mapField("fiscal_street", emp.street);
+        mapField("fiscal_exterior_number", emp.exterior_number);
+        mapField("fiscal_interior_number", emp.interior_number);
+        mapField("fiscal_neighborhood", emp.neighborhood);
+        mapField("fiscal_postal_code", emp.postal_code);
+        mapField("fiscal_municipality", emp.municipality);
+        mapField("fiscal_state", emp.state);
+
         mapField("phone", emp.phone);
         mapField("mobile_phone", emp.mobile_phone);
         mapField("emergency_contact_name", emp.emergency_contact_name);
@@ -519,14 +495,6 @@ router.post("/upload-excel", upload.single("file"), async (req, res) => {
         mapField("contract_end_date", emp.contract_end_date);
         mapField("base_daily_salary", emp.base_daily_salary);
         mapField("sdi_salary", emp.sdi_salary);
-
-        mapField("fiscal_street", emp.street);
-        mapField("fiscal_exterior_number", emp.exterior_number);
-        mapField("fiscal_interior_number", emp.interior_number);
-        mapField("fiscal_neighborhood", emp.neighborhood);
-        mapField("fiscal_postal_code", emp.postal_code);
-        mapField("fiscal_municipality", emp.municipality);
-        mapField("fiscal_state", emp.state);
 
         const colNames = fields.join(", ");
         const placeholders = fields.map((_, i) => `$${i + 1}`).join(", ");
@@ -556,8 +524,6 @@ router.post("/upload-excel", upload.single("file"), async (req, res) => {
     if (fs.existsSync(req.file.path)) {
       fs.unlinkSync(req.file.path);
     }
-
-    console.log(`✅ IMPORTACIÓN FINALIZADA: ${insertedCount} colaboradores agregados.`);
 
     res.json({
       message: `¡Carga masiva completada! Se registraron ${insertedCount} colaboradores correctamente.`,
