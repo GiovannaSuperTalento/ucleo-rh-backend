@@ -13,11 +13,9 @@ const fs = require("fs");
 const path = require("path");
 const { PDFDocument } = require("pdf-lib");
 
-// 🟢 LIBRERÍAS PARA EL PROCESAMIENTO DE PLANTILLAS PERSONALIZADAS
 const PizZip = require("pizzip");
 const Docxtemplater = require("docxtemplater");
 
-// 🟢 CONFIGURACIÓN DE ALMACENAMIENTO EN /uploads
 const uploadsDir = path.join(__dirname, "..", "uploads");
 if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
@@ -44,17 +42,15 @@ function capitalize(str) {
     .join(" ");
 }
 
-// 🟢 HELPER PARA NORMALIZAR Y COMPARAR ENCABEZADOS DE EXCEL FLEXIBLEMENTE
 function cleanHeader(str) {
   if (!str) return "";
   return String(str)
     .trim()
     .toUpperCase()
-    .normalize("NFD").replace(/[\u0300-\u036f]/g, "") // Eliminar acentos
-    .replace(/[^A-Z0-9]/g, ""); // Dejar solo letras y números
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^A-Z0-9]/g, "");
 }
 
-// 🟢 HELPER PARA CONVERTIR NÚMEROS A LETRAS EN ESPAÑOL (MONEDA NACIONAL)
 function numeroALetras(num) {
   if (num === null || num === undefined || isNaN(num) || num === 0) return "Cero pesos 00/100 M.N.";
 
@@ -65,7 +61,7 @@ function numeroALetras(num) {
 
   const unidades = ["", "un", "dos", "tres", "cuatro", "cinco", "seis", "siete", "ocho", "nueve"];
   const decenas = ["", "diez", "veinte", "treinta", "cuarenta", "cincuenta", "sesenta", "setenta", "ochenta", "noventa"];
-  const especiales = ["diez", "once", "doce", "trece", "catorce", "quince", "dieciséis", "diecisiete", "diecisiete", "dieciocho", "diecinueve"];
+  const especiales = ["diez", "once", "doce", "trece", "catorce", "quince", "diecisiete", "diecisiete", "dieciocho", "diecinueve"];
   const cientos = ["", "ciento", "doscientos", "trescientos", "cuatrocientos", "quinientos", "seiscientos", "setecientos", "ochocientos", "novecentos"];
 
   function convertirGrupo(n) {
@@ -115,7 +111,6 @@ function numeroALetras(num) {
   return `${resultado} pesos ${centavosTexto}/100 M.N.`;
 }
 
-// 🟢 HELPER PARA CONVERTIR FECHAS A TEXTO COMPLETO EN ESPAÑOL
 function formatearFechaLarga(fechaStr) {
   if (!fechaStr) return "SIN REGISTRAR";
   const fecha = new Date(fechaStr);
@@ -133,7 +128,6 @@ function formatearFechaLarga(fechaStr) {
   return `${dia} DE ${mes} DE ${anio}`;
 }
 
-// 🟢 HELPER PARA CALCULAR LA EDAD EXACTA
 function calcularEdad(fechaNacimientoStr) {
   if (!fechaNacimientoStr) return "NO ESPECIFICADA";
   const nacimiento = new Date(fechaNacimientoStr);
@@ -150,7 +144,6 @@ function calcularEdad(fechaNacimientoStr) {
   return `${edad} AÑOS`;
 }
 
-// 🟢 HELPER PARA EXPANDIR ESTADO CIVIL ABREVIADO
 function expandirEstadoCivil(estado) {
   if (!estado) return "SOLTERO(A)";
   const clean = String(estado).trim().toUpperCase();
@@ -225,16 +218,26 @@ router.get("/me", async (req, res) => {
   }
 });
 
-// 🟢 CARGA MASIVA DESDE EXCEL FLEXIBLE Y RESISTENTE
+// 🟢 CARGA MASIVA DE EXCEL CON MODO DIAGNÓSTICO Y BÚSQUEDA AUTOMÁTICA DE ENCABEZADO
 router.post("/upload-excel", upload.single("file"), async (req, res) => {
   if (!req.file) {
     return res.status(400).json({ message: "No se seleccionó ningún archivo Excel." });
   }
 
+  console.log(`\n========================================`);
+  console.log(`📄 INICIANDO IMPORTACIÓN DE EXCEL: ${req.file.originalname}`);
+  console.log(`========================================`);
+
   try {
     const workbook = new Workbook.Workbook();
     await workbook.xlsx.readFile(req.file.path);
     const worksheet = workbook.worksheets[0];
+
+    if (!worksheet) {
+      throw new Error("El archivo Excel no contiene hojas de trabajo válidas.");
+    }
+
+    console.log(`📌 Hoja detectada: "${worksheet.name}" | Total filas detectadas: ${worksheet.rowCount}`);
 
     let insertedCount = 0;
     const errors = [];
@@ -270,6 +273,8 @@ router.post("/upload-excel", upload.single("file"), async (req, res) => {
       return null;
     };
 
+    // 🔍 1. Buscar en qué fila están realmente los encabezados
+    let headerRowNumber = 1;
     let colMap = {
       first_name: -1, last_name_paternal: -1, last_name_maternal: -1, email: -1, position: -1, department: -1,
       hire_date: -1, curp: -1, rfc: -1, nss: -1, birth_date: -1, birth_place_municipality: -1, birth_place_state: -1,
@@ -280,11 +285,30 @@ router.post("/upload-excel", upload.single("file"), async (req, res) => {
       bank_clabe: -1, contract_type: -1, contract_start_date: -1, contract_end_date: -1, base_daily_salary: -1, sdi_salary: -1
     };
 
-    const headerRow = worksheet.getRow(1);
+    // Escanear las primeras 5 filas para encontrar la fila de títulos
+    for (let r = 1; r <= Math.min(5, worksheet.rowCount); r++) {
+      const candidateRow = worksheet.getRow(r);
+      let foundHeaders = 0;
+
+      candidateRow.eachCell({ includeEmpty: false }, (cell, colNum) => {
+        const val = cleanHeader(getCellText(candidateRow, colNum));
+        if (val.includes("NOMBRE") || val.includes("PATERNO") || val.includes("RFC") || val.includes("CURP") || val.includes("EMPRESA") || val.includes("PUESTO")) {
+          foundHeaders++;
+        }
+      });
+
+      if (foundHeaders >= 2) {
+        headerRowNumber = r;
+        console.log(`💡 Fila de encabezados identificada en la FILA ${headerRowNumber}`);
+        break;
+      }
+    }
+
+    const headerRow = worksheet.getRow(headerRowNumber);
     headerRow.eachCell({ includeEmpty: false }, (cell, colNum) => {
       const val = cleanHeader(getCellText(headerRow, colNum));
 
-      if (val.includes("NOMBRE") && !val.includes("EMPRESA") && !val.includes("EMERG") && !val.includes("PADRE")) colMap.first_name = colNum;
+      if (val.includes("NOMBRE") && !val.includes("EMPRESA") && !val.includes("EMERG") && !val.includes("PADRE") && !val.includes("BENEF")) colMap.first_name = colNum;
       else if (val.includes("PATERNO") || val.includes("APATERNO")) colMap.last_name_paternal = colNum;
       else if (val.includes("MATERNO") || val.includes("AMATERNO")) colMap.last_name_maternal = colNum;
       else if (val.includes("CORREO") || val.includes("EMAIL") || val.includes("TRABAJADOR")) colMap.email = colNum;
@@ -327,16 +351,19 @@ router.post("/upload-excel", upload.single("file"), async (req, res) => {
       else if (val.includes("SDIALTA") || val.includes("SDI")) colMap.sdi_salary = colNum;
     });
 
+    console.log("🔍 Mapeo de columnas detectadas:", JSON.stringify(colMap, null, 2));
+
     worksheet.eachRow({ includeEmpty: false }, (row, rowNumber) => {
-      if (rowNumber === 1) return;
+      if (rowNumber <= headerRowNumber) return; // Saltar títulos
 
       let rawFirstName = colMap.first_name !== -1 ? getCellText(row, colMap.first_name) : getCellText(row, 3);
       let rawPaternal = colMap.last_name_paternal !== -1 ? getCellText(row, colMap.last_name_paternal) : getCellText(row, 4);
       let rawMaternal = colMap.last_name_maternal !== -1 ? getCellText(row, colMap.last_name_maternal) : getCellText(row, 5);
 
+      // Si por alguna razón colMap no encontró la columna, intenta por posiciones de respaldo
       if (!rawFirstName && !rawPaternal) {
-        rawFirstName = getCellText(row, 1) || getCellText(row, 2);
-        rawPaternal = getCellText(row, 3);
+        rawFirstName = getCellText(row, 1) || getCellText(row, 2) || getCellText(row, 3);
+        rawPaternal = getCellText(row, 4) || getCellText(row, 5);
       }
 
       const first_name = capitalize(rawFirstName);
@@ -402,8 +429,10 @@ router.post("/upload-excel", upload.single("file"), async (req, res) => {
 
       let hire_date = parseExcelDate(colMap.hire_date !== -1 ? row.getCell(colMap.hire_date).value : row.getCell(9).value);
 
-      const isHeaderRow = (first_name.toUpperCase().includes("NOMBRE") || last_name_paternal.toUpperCase().includes("PATERNO"));
-      if ((first_name || last_name_paternal || personal_email) && !isHeaderRow) {
+      const cleanTestStr = (first_name + " " + last_name_paternal).toUpperCase();
+      const isHeaderRow = cleanTestStr.includes("NOMBRE") || cleanTestStr.includes("PATERNO") || cleanTestStr.includes("EMPRESA");
+
+      if ((first_name || last_name_paternal || personal_email || curp || rfc) && !isHeaderRow) {
         rowsToProcess.push({
           first_name: first_name || "Colaborador",
           last_name_paternal: last_name_paternal || null,
@@ -423,6 +452,8 @@ router.post("/upload-excel", upload.single("file"), async (req, res) => {
         });
       }
     });
+
+    console.log(`📊 Total de filas procesables encontradas: ${rowsToProcess.length}`);
 
     const tableColsRes = await pool.query(
       "SELECT column_name FROM information_schema.columns WHERE table_name = 'employees'"
@@ -509,7 +540,7 @@ router.post("/upload-excel", upload.single("file"), async (req, res) => {
 
         insertedCount++;
       } catch (err) {
-        console.error(`❌ Error al insertar a ${emp.first_name}:`, err.message);
+        console.error(`❌ Error al insertar fila (${emp.first_name}):`, err.message);
         errors.push(`Error en ${emp.first_name}: ${err.message}`);
       }
     }
@@ -518,8 +549,11 @@ router.post("/upload-excel", upload.single("file"), async (req, res) => {
       fs.unlinkSync(req.file.path);
     }
 
+    console.log(`✅ IMPORTACIÓN FINALIZADA: ${insertedCount} colaboradores agregados.`);
+
     res.json({
       message: `¡Carga masiva completada! Se registraron ${insertedCount} colaboradores correctamente.`,
+      insertedCount,
       errors
     });
   } catch (err) {
@@ -731,7 +765,6 @@ const handleFileDelete = async (req, res) => {
   }
 };
 
-// Rutas duales para eliminar archivos individuales
 router.delete("/:id/files/:fileId", handleFileDelete);
 router.delete("/files/:fileId", handleFileDelete);
 
@@ -767,7 +800,6 @@ router.post("/:id/upload-document", upload.single("file"), async (req, res) => {
   }
 });
 
-// También atiende POST a /:id/files para compatibilidad con api.js
 router.post("/:id/files", upload.single("file"), async (req, res) => {
   const { id } = req.params;
   const { fileType, file_type } = req.body;
@@ -929,8 +961,8 @@ router.get("/:id/download-all", async (req, res) => {
         cdHeader.writeUInt16LE(20, 6);
         cdHeader.writeUInt16LE(0, 8);
         cdHeader.writeUInt16LE(8, 10);
-        cdHeader.writeUInt16LE(0, 12);
         cdHeader.writeUInt16LE(0, 14);
+        cdHeader.writeUInt16LE(0, 16);
         cdHeader.writeUInt32LE(entry.crc, 16);
         cdHeader.writeUInt32LE(entry.compSize, 20);
         cdHeader.writeUInt32LE(entry.uncompSize, 24);
