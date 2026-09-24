@@ -43,7 +43,6 @@ const mapCompanyData = (comp, departments = []) => {
   };
 };
 
-// 🟢 HELPERS PARA FORMATO Y MONEDA EN ESPAÑOL
 function numeroALetras(num) {
   if (num === null || num === undefined || isNaN(num) || num === 0) return "CERO PESOS 00/100 M.N.";
   const valor = parseFloat(num);
@@ -140,7 +139,7 @@ router.get("/", async (req, res) => {
   }
 });
 
-// 2. CREAR UNA NUEVA EMPRESA (CON VERIFICACIÓN DINÁMICA DE COLUMNAS)
+// 2. CREAR UNA NUEVA EMPRESA
 router.post("/", async (req, res) => {
   const { legal_name, name, legalName, rfc, address, imss_registry, registro_patronal, departments } = req.body;
   const officialLegalName = (legal_name || name || legalName || "").trim();
@@ -186,8 +185,8 @@ router.post("/", async (req, res) => {
         const deptName = typeof dept === "string" ? dept : dept.name;
         if (deptName && deptName.trim() !== "") {
           const dRes = await pool.query(
-            "INSERT INTO departments (name, company_id, created_at) VALUES ($1, $2, NOW()) RETURNING id::text, name, company_id::text",
-            [deptName.trim(), createdCompany.id]
+            "INSERT INTO departments (name, company_id, created_at) VALUES ($1, $2::text, NOW()) RETURNING id::text, name, company_id::text",
+            [deptName.trim(), String(createdCompany.id)]
           ).catch(() => null);
           if (dRes && dRes.rows[0]) insertedDepts.push(dRes.rows[0]);
         }
@@ -201,7 +200,7 @@ router.post("/", async (req, res) => {
   }
 });
 
-// 3. EDITAR / ACTUALIZAR EMPRESA (DINÁMICO)
+// 3. EDITAR / ACTUALIZAR EMPRESA
 const handleUpdateCompany = async (req, res) => {
   const { id } = req.params;
   const { legal_name, name, legalName, rfc, address, imss_registry, registro_patronal } = req.body;
@@ -264,14 +263,12 @@ router.delete("/:id", async (req, res) => {
 
   try {
     const safeQuery = async (queryText, params) => {
-      try {
-        await pool.query(queryText, params);
-      } catch (e) {}
+      try { await pool.query(queryText, params); } catch (e) {}
     };
 
     await safeQuery("UPDATE employees SET company_id = NULL WHERE company_id::text = $1::text", [id]);
     await safeQuery("UPDATE companies SET parent_company_id = NULL WHERE parent_company_id::text = $1::text", [id]);
-    await safeQuery(`DELETE FROM positions WHERE department_id IN (SELECT id FROM departments WHERE company_id::text = $1::text)`, [id]);
+    await safeQuery(`DELETE FROM positions WHERE department_id::text IN (SELECT id::text FROM departments WHERE company_id::text = $1::text)`, [id]);
     await safeQuery("DELETE FROM branches WHERE company_id::text = $1::text", [id]);
     await safeQuery("DELETE FROM departments WHERE company_id::text = $1::text", [id]);
     await safeQuery("DELETE FROM company_departments WHERE company_id::text = $1::text", [id]);
@@ -292,7 +289,7 @@ router.delete("/:id", async (req, res) => {
   }
 });
 
-// 5. AGREGAR DEPARTAMENTO
+// 5. AGREGAR DEPARTAMENTO (CON SOPORTE PARA TEXT/UUID EN COMPANY_ID)
 router.post("/:id/departments", async (req, res) => {
   const { id } = req.params;
   const { name } = req.body;
@@ -303,19 +300,19 @@ router.post("/:id/departments", async (req, res) => {
 
   try {
     const result = await pool.query(
-      "INSERT INTO departments (name, company_id, created_at) VALUES ($1, $2, NOW()) RETURNING id::text, name, company_id::text",
-      [name.trim(), id]
+      "INSERT INTO departments (name, company_id, created_at) VALUES ($1, $2::text, NOW()) RETURNING id::text, name, company_id::text",
+      [name.trim(), String(id)]
     ).catch(async () => {
       return await pool.query(
-        "INSERT INTO company_departments (name, company_id) VALUES ($1, $2) RETURNING id::text, name, company_id::text",
-        [name.trim(), id]
+        "INSERT INTO company_departments (name, company_id) VALUES ($1, $2::text) RETURNING id::text, name, company_id::text",
+        [name.trim(), String(id)]
       );
     });
 
     res.status(201).json(result.rows[0]);
   } catch (err) {
     console.error(`❌ Error al crear departamento para empresa ${id}:`, err.message);
-    res.status(500).json({ message: "No se pudo agregar el departamento." });
+    res.status(500).json({ message: "No se pudo agregar el departamento: " + err.message });
   }
 });
 
@@ -339,21 +336,22 @@ router.delete("/departments/:deptId", async (req, res) => {
   }
 });
 
-// 🟢 7. GET /api/companies/:id/templates -> Listar plantillas de una empresa
+// 7. GET /api/companies/:id/templates -> Listar plantillas de una empresa
 router.get("/:id/templates", async (req, res) => {
   try {
     const { id } = req.params;
     const result = await pool.query(
       `SELECT * FROM company_templates WHERE company_id::text = $1::text ORDER BY document_type ASC, sub_type ASC`,
       [id]
-    );
+    ).catch(() => ({ rows: [] }));
+
     res.json(result.rows);
   } catch (err) {
-    res.status(500).json({ message: "Error al cargar plantillas de la empresa: " + err.message });
+    res.json([]);
   }
 });
 
-// 🟢 8. POST /api/companies/:id/upload-template -> Subir/Reemplazar plantilla
+// 8. POST /api/companies/:id/upload-template -> Subir/Reemplazar plantilla
 router.post("/:id/upload-template", upload.single("template"), async (req, res) => {
   try {
     const { id } = req.params;
@@ -368,11 +366,9 @@ router.post("/:id/upload-template", upload.single("template"), async (req, res) 
 
     const result = await pool.query(
       `INSERT INTO company_templates (company_id, document_type, sub_type, file_name, file_url, created_at)
-       VALUES ($1, $2, $3, $4, $5, NOW())
-       ON CONFLICT (company_id, document_type, sub_type) 
-       DO UPDATE SET file_name = EXCLUDED.file_name, file_url = EXCLUDED.file_url, created_at = NOW()
+       VALUES ($1::text, $2, $3, $4, $5, NOW())
        RETURNING *`,
-      [id, document_type, subTypeClean, req.file.originalname, relUrl]
+      [String(id), document_type, subTypeClean, req.file.originalname, relUrl]
     );
 
     res.json({ message: `Plantilla para '${document_type} - ${subTypeClean}' guardada con éxito.`, template: result.rows[0] });
@@ -381,14 +377,14 @@ router.post("/:id/upload-template", upload.single("template"), async (req, res) 
   }
 });
 
-// 🟢 9. POST /api/companies/:id/fill-template -> Rellenar la plantilla seleccionada por tipo y subtipo
+// 9. POST /api/companies/:id/fill-template -> Rellenar la plantilla seleccionada por tipo y subtipo
 router.post("/:id/fill-template", async (req, res) => {
   try {
     const { id } = req.params;
     const { document_type, sub_type, employee_id } = req.body;
 
     let queryStr = `SELECT * FROM company_templates WHERE company_id::text = $1::text AND document_type = $2`;
-    let queryParams = [id, document_type];
+    let queryParams = [String(id), document_type];
 
     if (sub_type) {
       queryStr += ` AND sub_type = $3`;
@@ -569,14 +565,14 @@ router.post("/:id/fill-template", async (req, res) => {
   }
 });
 
-// 🟢 10. POST /api/companies/:id/fill-template-batch -> GENERACIÓN MASIVA EN ZIP
+// 10. POST /api/companies/:id/fill-template-batch -> GENERACIÓN MASIVA EN ZIP
 router.post("/:id/fill-template-batch", async (req, res) => {
   try {
     const { id } = req.params;
     const { document_type, sub_type, department } = req.body;
 
     let queryTmpl = `SELECT * FROM company_templates WHERE company_id::text = $1::text AND document_type = $2`;
-    let paramsTmpl = [id, document_type];
+    let paramsTmpl = [String(id), document_type];
 
     if (sub_type) {
       queryTmpl += ` AND sub_type = $3`;
@@ -602,7 +598,7 @@ router.post("/:id/fill-template-batch", async (req, res) => {
       LEFT JOIN companies c ON c.id::text = e.company_id::text
       WHERE TRIM(LOWER(e.company_id::text)) = TRIM(LOWER($1::text)) AND TRIM(LOWER(e.employment_status)) = 'activo'
     `;
-    let paramsEmp = [id];
+    let paramsEmp = [String(id)];
 
     if (department && department !== "all" && department.trim() !== "") {
       queryEmp += ` AND TRIM(LOWER(e.department)) = TRIM(LOWER($2))`;
@@ -753,7 +749,7 @@ router.post("/:id/fill-template-batch", async (req, res) => {
   }
 });
 
-// 🟢 11. DELETE /api/companies/templates/:templateId -> Eliminar una plantilla de empresa por ID
+// 11. DELETE /api/companies/templates/:templateId -> Eliminar una plantilla de empresa por ID
 router.delete("/templates/:templateId", async (req, res) => {
   const { templateId } = req.params;
   try {

@@ -653,13 +653,13 @@ const initDefaultAdmin = async () => {
 };
 
 // ============================================================================
-// 🟢 MIGRACIÓN AUTOMÁTICA DE ESQUEMA EN POSTGRESQL (CRUCIAL PARA ESTRUCTURA)
+// 🟢 MIGRACIÓN AUTOMÁTICA DE ESQUEMA EN POSTGRESQL
 // ============================================================================
 async function checkAndFixSchema() {
   try {
     console.log("🛠️ Verificando y creando estructura de tablas/columnas en PostgreSQL...");
 
-    // 1. Crear / Estructurar la tabla 'companies'
+    // 1. Tabla 'companies'
     await pool.query(`
       CREATE TABLE IF NOT EXISTS companies (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -671,18 +671,40 @@ async function checkAndFixSchema() {
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
     `);
-    
-    await pool.query(`
-      ALTER TABLE companies 
-      ADD COLUMN IF NOT EXISTS legal_name VARCHAR(255),
-      ADD COLUMN IF NOT EXISTS rfc VARCHAR(50),
-      ADD COLUMN IF NOT EXISTS address TEXT,
-      ADD COLUMN IF NOT EXISTS imss_registry VARCHAR(100),
-      ADD COLUMN IF NOT EXISTS registro_patronal VARCHAR(100);
-    `);
-    console.log("✅ Tabla 'companies' sincronizada con todas sus columnas.");
 
-    // 2. Crear / Estructurar la tabla 'employees'
+    // 2. Tablas de Departamentos
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS departments (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        company_id TEXT,
+        name VARCHAR(255) NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS company_departments (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        company_id TEXT,
+        name VARCHAR(255) NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    // 3. Tabla 'company_templates'
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS company_templates (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        company_id TEXT,
+        document_type VARCHAR(100) NOT NULL,
+        sub_type VARCHAR(100) DEFAULT 'General',
+        file_name VARCHAR(255) NOT NULL,
+        file_url TEXT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    // 4. Tabla 'employees'
     await pool.query(`
       ALTER TABLE employees 
       ADD COLUMN IF NOT EXISTS last_name_paternal VARCHAR(255),
@@ -731,9 +753,8 @@ async function checkAndFixSchema() {
       ADD COLUMN IF NOT EXISTS beneficiary_relationship VARCHAR(100),
       ADD COLUMN IF NOT EXISTS beneficiary_phone VARCHAR(50);
     `);
-    console.log("✅ Tabla 'employees' sincronizada con todas las columnas.");
 
-    // 3. Crear la tabla 'leave_requests' si no existe
+    // 5. Tabla 'leave_requests'
     await pool.query(`
       CREATE TABLE IF NOT EXISTS leave_requests (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -748,13 +769,13 @@ async function checkAndFixSchema() {
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
     `);
-    console.log("✅ Tabla 'leave_requests' creada/verificada.");
+
+    console.log("✅ Estructura de base de datos totalmente sincronizada en PostgreSQL.");
 
   } catch (err) {
     console.error("❌ Error en la verificación de esquema:", err.message);
   }
 }
-
 // 4. INICIALIZACIÓN DEL SERVIDOR
 const PORT = process.env.PORT || 4000;
 app.listen(PORT, async () => {
