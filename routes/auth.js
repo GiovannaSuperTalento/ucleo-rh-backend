@@ -15,10 +15,6 @@ const router = express.Router();
 
 // ---------------------------------------------------------------
 // SOLICITAR RECUPERACIÓN DE CONTRASEÑA
-// body: { email }
-// Por seguridad, siempre respondemos el mismo mensaje exista o no
-// el correo — así nadie puede usar este endpoint para "adivinar"
-// qué correos están registrados en el sistema.
 // ---------------------------------------------------------------
 router.post("/forgot-password", async (req, res) => {
   const { email } = req.body;
@@ -27,9 +23,9 @@ router.post("/forgot-password", async (req, res) => {
   const genericResponse = { message: "Si el correo existe en nuestro sistema, te enviamos un enlace para restablecer tu contraseña." };
 
   try {
-    const result = await pool.query("SELECT id FROM users WHERE email = $1", [email]);
+    const result = await pool.query("SELECT id FROM users WHERE LOWER(email) = LOWER($1)", [email]);
     if (result.rows.length === 0) {
-      return res.json(genericResponse); // no revelamos si el correo existe o no
+      return res.json(genericResponse);
     }
 
     const userId = result.rows[0].id;
@@ -44,14 +40,12 @@ router.post("/forgot-password", async (req, res) => {
     res.json(genericResponse);
   } catch (err) {
     console.error(err);
-    // Aun si falla el envío, no revelamos detalles internos al usuario
     res.json(genericResponse);
   }
 });
 
 // ---------------------------------------------------------------
 // CONFIRMAR NUEVA CONTRASEÑA
-// body: { token, password }
 // ---------------------------------------------------------------
 router.post("/reset-password", async (req, res) => {
   const { token, password } = req.body;
@@ -85,15 +79,15 @@ router.post("/reset-password", async (req, res) => {
 });
 
 // ---------------------------------------------------------------
-// LISTAR USUARIOS (solo admin) — para la sección "Usuarios" del panel
+// LISTAR USUARIOS (solo admin)
 // ---------------------------------------------------------------
 router.get("/users", requireAuth, requireRole("admin"), async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT u.id, u.email, u.is_active, u.created_at, r.name AS role
+      `SELECT u.id, u.email, u.is_active, u.created_at, COALESCE(r.name, u.role, 'empleado') AS role
        FROM users u
-       JOIN user_roles ur ON ur.user_id = u.id
-       JOIN roles r ON r.id = ur.role_id
+       LEFT JOIN user_roles ur ON ur.user_id = u.id
+       LEFT JOIN roles r ON r.id = ur.role_id
        ORDER BY u.created_at DESC`
     );
     res.json(result.rows);
@@ -105,7 +99,6 @@ router.get("/users", requireAuth, requireRole("admin"), async (req, res) => {
 
 // ---------------------------------------------------------------
 // REGISTRO
-// body esperado: { email, password, role: "admin" | "empleado" }
 // ---------------------------------------------------------------
 router.post("/register", async (req, res) => {
   const { email, password, role } = req.body;
@@ -115,31 +108,24 @@ router.post("/register", async (req, res) => {
   }
 
   try {
-    // 1) Verificar que el correo no exista ya
-    const existing = await pool.query("SELECT id FROM users WHERE email = $1", [email]);
+    const existing = await pool.query("SELECT id FROM users WHERE LOWER(email) = LOWER($1)", [email]);
     if (existing.rows.length > 0) {
       return res.status(409).json({ message: "Ya existe un usuario con ese correo." });
     }
 
-    // 2) Cifrar la contraseña (nunca se guarda en texto plano)
     const passwordHash = await bcrypt.hash(password, 10);
 
-    // 3) Insertar el usuario
     const userResult = await pool.query(
-      "INSERT INTO users (email, password_hash) VALUES ($1, $2) RETURNING id, email",
+      "INSERT INTO users (email, password_hash, is_active, created_at) VALUES ($1, $2, true, NOW()) RETURNING id, email",
       [email, passwordHash]
     );
     const user = userResult.rows[0];
 
-    // 4) Buscar el id del rol solicitado
-    const roleResult = await pool.query("SELECT id FROM roles WHERE name = $1", [role]);
-    if (roleResult.rows.length === 0) {
-      return res.status(400).json({ message: `El rol '${role}' no existe. Usa 'admin' o 'empleado'.` });
+    const roleResult = await pool.query("SELECT id FROM roles WHERE LOWER(name) = LOWER($1)", [role]);
+    if (roleResult.rows.length > 0) {
+      const roleId = roleResult.rows[0].id;
+      await pool.query("INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2)", [user.id, roleId]);
     }
-    const roleId = roleResult.rows[0].id;
-
-    // 5) Asignar el rol al usuario
-    await pool.query("INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2)", [user.id, roleId]);
 
     res.status(201).json({ message: "Usuario creado correctamente.", user: { id: user.id, email: user.email, role } });
   } catch (err) {
@@ -149,8 +135,7 @@ router.post("/register", async (req, res) => {
 });
 
 // ---------------------------------------------------------------
-// LOGIN
-// body esperado: { email, password }
+// LOGIN (CON DIAGNÓSTICO Y SOPORTE MULTI-ESQUEMA)
 // ---------------------------------------------------------------
 router.post("/login", async (req, res) => {
   const { email, password } = req.body;
@@ -160,53 +145,84 @@ router.post("/login", async (req, res) => {
   }
 
   try {
-    // 1) Buscar al usuario junto con su rol
+    console.log(`🔍 [AUTH] Intento de login para: ${email}`);
+
+    // Consulta resiliente con LEFT JOIN
     const result = await pool.query(
-      `SELECT u.id, u.email, u.password_hash, u.is_active, r.name AS role
+      `SELECT u.id, u.email, u.password, u.password_hash, u.is_active, u.team_id,
+              COALESCE(r.name, u.role, 'admin') AS role
        FROM users u
-       JOIN user_roles ur ON ur.user_id = u.id
-       JOIN roles r ON r.id = ur.role_id
-       WHERE u.email = $1`,
+       LEFT JOIN user_roles ur ON ur.user_id = u.id
+       LEFT JOIN roles r ON r.id = ur.role_id
+       WHERE LOWER(u.email) = LOWER($1)`,
       [email]
     );
 
     if (result.rows.length === 0) {
+      console.warn(`❌ [AUTH] Usuario no encontrado: ${email}`);
       return res.status(401).json({ message: "Correo o contraseña incorrectos." });
     }
 
     const user = result.rows[0];
 
-    if (!user.is_active) {
+    if (user.is_active === false) {
+      console.warn(`⚠️ [AUTH] Cuenta desactivada para: ${email}`);
       return res.status(403).json({ message: "Esta cuenta está desactivada. Contacta a un administrador." });
     }
 
-    // 2) Comparar la contraseña enviada contra el hash guardado
-    const validPassword = await bcrypt.compare(password, user.password_hash);
+    // Detectar si el hash está en 'password_hash' o 'password'
+    const storedHash = user.password_hash || user.password;
+
+    if (!storedHash) {
+      console.error(`💥 [AUTH] El usuario ${email} no tiene ninguna contraseña o hash guardado.`);
+      return res.status(401).json({ message: "Error de configuración de credenciales." });
+    }
+
+    // Comparar la contraseña ingresada con el hash cifrado
+    const validPassword = await bcrypt.compare(password, storedHash);
+    
     if (!validPassword) {
+      console.warn(`🔑 [AUTH] Contraseña incorrecta para: ${email}`);
       return res.status(401).json({ message: "Correo o contraseña incorrectos." });
     }
 
-    // 3) Buscar si este usuario tiene un empleado vinculado (por el mismo correo)
-    const employeeResult = await pool.query("SELECT id FROM employees WHERE personal_email = $1", [email]);
+    console.log(`✅ [AUTH] Login exitoso para: ${email} (${user.role})`);
+
+    // Buscar si el usuario tiene un perfil de empleado vinculado
+    const employeeResult = await pool.query("SELECT id FROM employees WHERE LOWER(personal_email) = LOWER($1)", [email]);
     const employeeId = employeeResult.rows[0]?.id || null;
 
-    // 4) Generar el token JWT (esto es lo que el frontend guardará como "sesión")
+    // Generar el token JWT de acceso
     const token = jwt.sign(
-      { id: user.id, email: user.email, role: user.role, employeeId },
-      process.env.JWT_SECRET,
+      { 
+        id: user.id, 
+        email: user.email, 
+        role: user.role, 
+        team_id: user.team_id || 1, 
+        employeeId 
+      },
+      process.env.JWT_SECRET || "secreto_desarrollo",
       { expiresIn: "8h" }
     );
 
-    res.json({ token, user: { id: user.id, email: user.email, role: user.role, employeeId } });
+    res.json({ 
+      token, 
+      user: { 
+        id: user.id, 
+        email: user.email, 
+        role: user.role, 
+        team_id: user.team_id || 1, 
+        employeeId 
+      } 
+    });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: "Error al iniciar sesión." });
+    console.error("💥 [AUTH ERROR]:", err);
+    res.status(500).json({ message: "Error interno al iniciar sesión." });
   }
 });
 
 // ---------------------------------------------------------------
-// EDITAR USUARIO (solo admin) — cambiar rol, activar/desactivar, resetear contraseña
-// body: { role?, is_active?, password? }
+// EDITAR USUARIO (solo admin)
 // ---------------------------------------------------------------
 router.patch("/users/:id", requireAuth, requireRole("admin"), async (req, res) => {
   const { id } = req.params;
@@ -219,16 +235,16 @@ router.patch("/users/:id", requireAuth, requireRole("admin"), async (req, res) =
 
     if (password) {
       const passwordHash = await bcrypt.hash(password, 10);
-      await pool.query("UPDATE users SET password_hash = $1 WHERE id = $2", [passwordHash, id]);
+      await pool.query("UPDATE users SET password_hash = $1, password = $1 WHERE id = $2", [passwordHash, id]);
     }
 
     if (role) {
-      const roleResult = await pool.query("SELECT id FROM roles WHERE name = $1", [role]);
-      if (roleResult.rows.length === 0) {
-        return res.status(400).json({ message: `El rol '${role}' no existe.` });
+      const roleResult = await pool.query("SELECT id FROM roles WHERE LOWER(name) = LOWER($1)", [role]);
+      if (roleResult.rows.length > 0) {
+        await pool.query("DELETE FROM user_roles WHERE user_id = $1", [id]);
+        await pool.query("INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2)", [id, roleResult.rows[0].id]);
       }
-      await pool.query("DELETE FROM user_roles WHERE user_id = $1", [id]);
-      await pool.query("INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2)", [id, roleResult.rows[0].id]);
+      await pool.query("UPDATE users SET role = $1 WHERE id = $2", [role, id]);
     }
 
     res.json({ message: "Usuario actualizado correctamente." });
@@ -239,7 +255,7 @@ router.patch("/users/:id", requireAuth, requireRole("admin"), async (req, res) =
 });
 
 // ---------------------------------------------------------------
-// ELIMINAR USUARIO (solo admin) — no puedes eliminar tu propia cuenta
+// ELIMINAR USUARIO (solo admin)
 // ---------------------------------------------------------------
 router.delete("/users/:id", requireAuth, requireRole("admin"), async (req, res) => {
   const { id } = req.params;
@@ -260,7 +276,10 @@ router.delete("/users/:id", requireAuth, requireRole("admin"), async (req, res) 
     res.status(500).json({ message: "No se pudo eliminar el usuario." });
   }
 });
-// POST /api/auth/register-team -> Registro público de nuevo Equipo + Administrador
+
+// ---------------------------------------------------------------
+// REGISTRO DE EQUIPO + ADMIN
+// ---------------------------------------------------------------
 router.post("/register-team", async (req, res) => {
   const { team_name, user_email, password, full_name } = req.body;
 
@@ -272,14 +291,12 @@ router.post("/register-team", async (req, res) => {
   try {
     await client.query("BEGIN");
 
-    // Verificar si el usuario ya existe
     const userExist = await client.query("SELECT id FROM users WHERE LOWER(email) = LOWER($1)", [user_email]);
     if (userExist.rows.length > 0) {
       await client.query("ROLLBACK");
       return res.status(400).json({ message: "El correo electrónico ya está registrado." });
     }
 
-    // 1. Crear el nuevo Equipo
     const slug = team_name.toLowerCase().replace(/[^a-z0-9]/g, "-") + "-" + Math.floor(1000 + Math.random() * 9000);
     const newTeam = await client.query(
       `INSERT INTO teams (name, slug, created_at) VALUES ($1, $2, NOW()) RETURNING *`,
@@ -287,17 +304,15 @@ router.post("/register-team", async (req, res) => {
     );
     const teamId = newTeam.rows[0].id;
 
-    // 2. Hash de contraseña y creación del Usuario Dueño/Admin
     const hashedPassword = await bcrypt.hash(password, 10);
     const newUser = await client.query(
-      `INSERT INTO users (email, password, name, role, team_id, team_role, created_at)
-       VALUES ($1, $2, $3, 'admin', $4, 'owner', NOW()) RETURNING id, email, name, role, team_id`,
+      `INSERT INTO users (email, password, password_hash, name, role, team_id, team_role, is_active, created_at)
+       VALUES ($1, $2, $2, $3, 'admin', $4, 'owner', true, NOW()) RETURNING id, email, name, role, team_id`,
       [user_email, hashedPassword, full_name || team_name, teamId]
     );
 
     await client.query("COMMIT");
 
-    // 3. Generar Token JWT enriquecido con el team_id
     const token = jwt.sign(
       { id: newUser.rows[0].id, email: newUser.rows[0].email, role: "admin", team_id: teamId },
       process.env.JWT_SECRET || "secreto_rh",
@@ -318,4 +333,5 @@ router.post("/register-team", async (req, res) => {
     client.release();
   }
 });
+
 module.exports = router;
