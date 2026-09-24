@@ -711,9 +711,78 @@ const initDefaultAdmin = async () => {
   }
 };
 
+// ============================================================================
+// 🟢 MIGRACIÓN AUTOMÁTICA DE ESQUEMA PARA EVITAR ERRORES DE COLUMNAS EN RAILWAY
+// ============================================================================
+async function checkAndFixSchema() {
+  try {
+    console.log("🛠️ Verificando y corrigiendo esquema de PostgreSQL...");
+
+    // 1. Asegurar columnas faltantes en 'employees'
+    await pool.query(`
+      ALTER TABLE employees 
+      ADD COLUMN IF NOT EXISTS hire_date DATE,
+      ADD COLUMN IF NOT EXISTS street VARCHAR(255),
+      ADD COLUMN IF NOT EXISTS exterior_number VARCHAR(50),
+      ADD COLUMN IF NOT EXISTS interior_number VARCHAR(50),
+      ADD COLUMN IF NOT EXISTS neighborhood VARCHAR(255),
+      ADD COLUMN IF NOT EXISTS postal_code VARCHAR(20),
+      ADD COLUMN IF NOT EXISTS municipality VARCHAR(255),
+      ADD COLUMN IF NOT EXISTS state VARCHAR(255),
+      ADD COLUMN IF NOT EXISTS fiscal_street VARCHAR(255),
+      ADD COLUMN IF NOT EXISTS fiscal_exterior_number VARCHAR(50),
+      ADD COLUMN IF NOT EXISTS fiscal_interior_number VARCHAR(50),
+      ADD COLUMN IF NOT EXISTS fiscal_neighborhood VARCHAR(255),
+      ADD COLUMN IF NOT EXISTS fiscal_postal_code VARCHAR(20),
+      ADD COLUMN IF NOT EXISTS fiscal_municipality VARCHAR(255),
+      ADD COLUMN IF NOT EXISTS fiscal_state VARCHAR(255),
+      ADD COLUMN IF NOT EXISTS job_activities TEXT,
+      ADD COLUMN IF NOT EXISTS work_schedule VARCHAR(255),
+      ADD COLUMN IF NOT EXISTS base_daily_salary NUMERIC(12,2),
+      ADD COLUMN IF NOT EXISTS sdi_salary NUMERIC(12,2),
+      ADD COLUMN IF NOT EXISTS base_salary NUMERIC(12,2),
+      ADD COLUMN IF NOT EXISTS payroll_type VARCHAR(10) DEFAULT 'QUI',
+      ADD COLUMN IF NOT EXISTS has_infonavit_credit VARCHAR(5) DEFAULT 'NO',
+      ADD COLUMN IF NOT EXISTS infonavit_credit_number VARCHAR(50),
+      ADD COLUMN IF NOT EXISTS infonavit_discount_value NUMERIC(12,2),
+      ADD COLUMN IF NOT EXISTS bank_name VARCHAR(100),
+      ADD COLUMN IF NOT EXISTS bank_account VARCHAR(50),
+      ADD COLUMN IF NOT EXISTS bank_clabe VARCHAR(50),
+      ADD COLUMN IF NOT EXISTS emergency_contact_name VARCHAR(255),
+      ADD COLUMN IF NOT EXISTS emergency_contact_relationship VARCHAR(100),
+      ADD COLUMN IF NOT EXISTS emergency_contact_phone VARCHAR(50),
+      ADD COLUMN IF NOT EXISTS beneficiary_name VARCHAR(255),
+      ADD COLUMN IF NOT EXISTS beneficiary_relationship VARCHAR(100),
+      ADD COLUMN IF NOT EXISTS beneficiary_phone VARCHAR(50);
+    `);
+    console.log("✅ Tabla 'employees' actualizada con todas las columnas necesarias.");
+
+    // 2. Crear la tabla 'leave_requests' si no existe
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS leave_requests (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        employee_id UUID,
+        leave_type VARCHAR(100),
+        request_type VARCHAR(100) DEFAULT 'vacaciones',
+        start_date DATE NOT NULL,
+        end_date DATE NOT NULL,
+        days_requested INT DEFAULT 1,
+        status VARCHAR(50) DEFAULT 'pendiente',
+        comments TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+    console.log("✅ Tabla 'leave_requests' verificada/creada.");
+
+  } catch (err) {
+    console.error("❌ Error durante la verificación del esquema:", err.message);
+  }
+}
+
 // 4. INICIALIZACIÓN DEL SERVIDOR
 const PORT = process.env.PORT || 4000;
 app.listen(PORT, async () => {
+  await checkAndFixSchema();
   await initDefaultAdmin();
   console.log(`Servidor corriendo en http://localhost:${PORT}`);
 });
