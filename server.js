@@ -7,6 +7,7 @@ const aiAssistantRouter = require("./routes/aiAssistant");
 const documentsRouter = require("./routes/documents");
 const companiesRouter = require("./routes/companies");
 const employeesRouter = require("./routes/employees"); // 🟢 IMPORTACIÓN DEL ROUTER DE EMPLEADOS
+const announcementsRouter = require("./routes/announcements"); // 🟢 IMPORTACIÓN DEL ROUTER DE COMUNICADOS
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const JWT_SECRET = process.env.JWT_SECRET || "nucleo_rh_secret_key_2026";
@@ -40,8 +41,11 @@ app.use("/api", aiAssistantRouter);
 // Router de empresas
 app.use("/api/companies", companiesRouter);
 
-// 🟢 ENRUTADOR DE EMPLEADOS COMPLETO (Soporta /upload-excel, /me, /:id, etc.)
+// 🟢 ENRUTADOR DE EMPLEADOS COMPLETO
 app.use("/api/employees", employeesRouter);
+
+// 🟢 ENRUTADOR DE COMUNICADOS Y ANUNCIOS
+app.use("/api/announcements", announcementsRouter);
 
 // Adaptador para estandarizar los datos del frontend antes de pasar al router de documentos
 app.use("/api/documents/generate", (req, res, next) => {
@@ -671,20 +675,16 @@ app.post(["/api/auth/reset-password", "/api/reset-password"], async (req, res) =
 
 const initDefaultAdmin = async () => {
   try {
-    // 1. Declarar variables por defecto si no existen
     const adminEmail = process.env.ADMIN_EMAIL || 'admin@empresa.com';
     const defaultPass = process.env.ADMIN_PASSWORD || 'admin123';
 
-    // 2. Crear las columnas necesarias si aún no existen
     await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE;`);
     await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS position VARCHAR(100);`);
     await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url TEXT;`);
     await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash TEXT;`);
 
-    // 3. Generar hash de contraseña seguro
     const hashedPassword = await bcrypt.hash(defaultPass, 10);
 
-    // 4. Buscar o crear el usuario administrador
     const check = await pool.query(
       `SELECT * FROM users WHERE LOWER(email) = LOWER($1)`,
       [adminEmail]
