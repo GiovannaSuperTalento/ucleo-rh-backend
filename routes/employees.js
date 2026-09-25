@@ -51,6 +51,30 @@ function cleanHeader(str) {
     .replace(/[^A-Z0-9]/g, "");
 }
 
+// 🟢 HELPERS SANITIZADORES PARA EVITAR ERRORES 500 EN POSTGRESQL
+function parseNum(val) {
+  if (val === null || val === undefined || val === "") return null;
+  const num = parseFloat(val);
+  return isNaN(num) ? null : num;
+}
+
+function parseUuid(val) {
+  if (!val || typeof val !== "string" || val.trim() === "" || val === "null" || val === "undefined") return null;
+  return val.trim();
+}
+
+function parseStr(val) {
+  if (val === null || val === undefined) return null;
+  const s = String(val).trim();
+  return s === "" || s.toLowerCase() === "null" || s.toLowerCase() === "undefined" ? null : s;
+}
+
+function parseDateStr(val) {
+  if (!val) return null;
+  const clean = String(val).slice(0, 10).trim();
+  return clean === "" || clean.toLowerCase() === "null" || clean.toLowerCase() === "undefined" ? null : clean;
+}
+
 function numeroALetras(num) {
   if (num === null || num === undefined || isNaN(num) || num === 0) return "Cero pesos 00/100 M.N.";
 
@@ -163,34 +187,22 @@ function expandirEstadoCivil(estado) {
   return mapa[clean] || clean;
 }
 
-// GET /api/employees -> Listar empleados
-router.get("/", async (req, res) => {
-  const { search } = req.query;
+// GET /api/employees/:id/files -> Obtener lista de archivos/expediente digital del empleado
+router.get("/:id/files", async (req, res) => {
+  const { id } = req.params;
+
   try {
-    let query = `
-      SELECT e.*, c.legal_name AS company_name
-      FROM employees e
-      LEFT JOIN companies c ON c.id::text = e.company_id::text
-    `;
-    const values = [];
+    const result = await pool.query(
+      `SELECT * FROM employee_files 
+       WHERE employee_id::text = $1::text 
+       ORDER BY created_at DESC`,
+      [String(id).trim()]
+    ).catch(() => ({ rows: [] }));
 
-    if (search && search.trim() !== "") {
-      query += ` WHERE (
-        LOWER(e.first_name || ' ' || COALESCE(e.last_name, '')) LIKE $1 OR
-        LOWER(e.personal_email) LIKE $1 OR
-        LOWER(COALESCE(e.curp, '')) LIKE $1 OR
-        LOWER(COALESCE(e.rfc, '')) LIKE $1
-      )`;
-      values.push(`%${search.trim().toLowerCase()}%`);
-    }
-
-    query += ` ORDER BY e.created_at DESC`;
-
-    const result = await pool.query(query, values);
     res.json(result.rows);
   } catch (err) {
-    console.error("Error al obtener empleados:", err);
-    res.status(500).json({ message: "Error interno al obtener empleados." });
+    console.error("❌ Error al obtener archivos del empleado:", err.message);
+    res.json([]); // Retornar arreglo vacío en lugar de status 500
   }
 });
 
@@ -237,7 +249,6 @@ router.post("/upload-excel", upload.single("file"), async (req, res) => {
     const errors = [];
     const rowsToProcess = [];
 
-    // Helper robusto para extraer texto de cualquier formato de celda
     const getCellText = (row, colNum) => {
       if (!row || colNum < 1) return "";
       const cell = row.getCell(colNum);
@@ -272,9 +283,8 @@ router.post("/upload-excel", upload.single("file"), async (req, res) => {
       return null;
     };
 
-    // Mapeo basado exactamente en las 42 columnas de la plantilla
     worksheet.eachRow({ includeEmpty: false }, (row, rowNumber) => {
-      if (rowNumber === 1) return; // Fila de títulos
+      if (rowNumber === 1) return;
 
       const company_name = getCellText(row, 1);
       const nssRaw = getCellText(row, 2);
@@ -282,7 +292,6 @@ router.post("/upload-excel", upload.single("file"), async (req, res) => {
       let rawPaternal = getCellText(row, 4);
       let rawMaternal = getCellText(row, 5);
 
-      // Desglose automático de apellido paterno si trae ambos incluidos
       if (rawPaternal && !rawMaternal && rawPaternal.trim().includes(" ")) {
         const parts = rawPaternal.trim().split(/\s+/);
         if (parts.length >= 2) {
@@ -297,8 +306,8 @@ router.post("/upload-excel", upload.single("file"), async (req, res) => {
       const last_name = [last_name_paternal, last_name_maternal].filter(Boolean).join(" ").trim() || last_name_paternal || "N/A";
 
       const rawCurp = getCellText(row, 6);
-      const base_daily_salary = getCellText(row, 7);
-      const sdi_salary = getCellText(row, 8);
+      const base_daily_salary = parseNum(getCellText(row, 7));
+      const sdi_salary = parseNum(getCellText(row, 8));
       const hire_date = parseExcelDate(row.getCell(9).value) || parseExcelDate(getCellText(row, 9));
       const department = capitalize(getCellText(row, 10));
       const position = capitalize(getCellText(row, 11));
@@ -339,7 +348,7 @@ router.post("/upload-excel", upload.single("file"), async (req, res) => {
 
       const has_infonavit_credit = getCellText(row, 33).toUpperCase().includes("SI") ? "SI" : "NO";
       const infonavit_credit_number = getCellText(row, 34);
-      const infonavit_discount_value = getCellText(row, 35);
+      const infonavit_discount_value = parseNum(getCellText(row, 35));
 
       const bank_name = getCellText(row, 36);
       const bank_account = getCellText(row, 37);
@@ -375,7 +384,6 @@ router.post("/upload-excel", upload.single("file"), async (req, res) => {
       }
     });
 
-    // Obtener columnas reales disponibles en la tabla de la BD
     const tableColsRes = await pool.query(
       "SELECT column_name FROM information_schema.columns WHERE table_name = 'employees'"
     );
@@ -410,7 +418,6 @@ router.post("/upload-excel", upload.single("file"), async (req, res) => {
         mapField("education_level", emp.education_level);
         mapField("last_grade", emp.last_grade);
 
-        // Domicilio Comprobante Personal
         mapField("street", emp.street);
         mapField("exterior_number", emp.exterior_number);
         mapField("interior_number", emp.interior_number);
@@ -419,7 +426,6 @@ router.post("/upload-excel", upload.single("file"), async (req, res) => {
         mapField("municipality", emp.municipality);
         mapField("state", emp.state);
 
-        // Domicilio Fiscal (Constancia de Situación Fiscal)
         mapField("fiscal_street", emp.street);
         mapField("fiscal_exterior_number", emp.exterior_number);
         mapField("fiscal_interior_number", emp.interior_number);
@@ -623,7 +629,7 @@ router.put("/:id/files/:fileId/move", async (req, res) => {
   }
 });
 
-// GET /api/employees/:id/files -> Obtener lista de archivos/expediente digital del empleado
+// GET /api/employees/:id/files
 router.get("/:id/files", async (req, res) => {
   const { id } = req.params;
 
@@ -691,7 +697,7 @@ const handleFileDelete = async (req, res) => {
 router.delete("/:id/files/:fileId", handleFileDelete);
 router.delete("/files/:fileId", handleFileDelete);
 
-// POST /api/employees/:id/upload-document -> Subir un único documento al expediente
+// POST /api/employees/:id/upload-document
 router.post("/:id/upload-document", upload.single("file"), async (req, res) => {
   const { id } = req.params;
   const { fileType, file_type } = req.body;
@@ -1178,7 +1184,7 @@ router.post("/:id/fill-custom-template", upload.single("template"), async (req, 
   }
 });
 
-// GET /api/employees/:id -> Obtener detalle de un empleado por ID (UUID)
+// GET /api/employees/:id
 router.get("/:id", async (req, res) => {
   const { id } = req.params;
 
@@ -1215,7 +1221,7 @@ router.post("/", async (req, res) => {
     const maternalCap = capitalize(e.last_name_maternal);
     const lastNameCap = [paternalCap, maternalCap].filter(Boolean).join(" ").trim() || capitalize(e.last_name);
 
-    const actividadesInput = e.job_activities || e.jobActivities || e.actividades || e.actividades_puesto || null;
+    const actividadesInput = parseStr(e.job_activities || e.jobActivities || e.actividades || e.actividades_puesto);
 
     const empResult = await client.query(
       `INSERT INTO employees (
@@ -1238,18 +1244,18 @@ router.post("/", async (req, res) => {
         $51, $52, $53, $54, $55, $56, $57, $58, $59
       ) RETURNING *`,
       [
-        e.employee_number || null, firstNameCap, paternalCap || null, maternalCap || null, lastNameCap,
-        e.curp ? e.curp.toUpperCase() : null, e.rfc ? e.rfc.toUpperCase() : null, e.nss || null, e.birth_date || null, capitalize(e.birth_place_municipality) || null, capitalize(e.birth_place_state) || null,
-        e.gender || null, e.marital_status || null, e.education_level || null, e.last_grade || null, e.personal_email || null, e.phone || null, e.mobile_phone || null,
-        e.street || null, e.exterior_number || null, e.interior_number || null, e.neighborhood || null, e.postal_code || null, e.municipality || null, e.state || null, e.address || null,
-        e.fiscal_street || null, e.fiscal_exterior_number || null, e.fiscal_interior_number || null, e.fiscal_neighborhood || null, e.fiscal_postal_code || null, e.fiscal_municipality || null, e.fiscal_state || null,
-        capitalize(e.department), capitalize(e.position) || null, actividadesInput, e.manager_id || null, e.company_id || null, e.hire_date, e.employment_status || 'activo',
-        e.contract_type || null, e.contract_start_date || null, e.contract_end_date || null,
-        e.base_daily_salary ? parseFloat(e.base_daily_salary) : null, e.sdi_salary ? parseFloat(e.sdi_salary) : null, e.base_salary ? parseFloat(e.base_salary) : null, e.payroll_type || 'QUI',
-        e.has_infonavit_credit || 'NO', e.infonavit_credit_number || null, e.infonavit_discount_value ? parseFloat(e.infonavit_discount_value) : null,
-        e.bank_name || null, e.bank_account || null, e.bank_clabe || null,
-        capitalize(e.emergency_contact_name) || null, e.emergency_contact_relationship || null, e.emergency_contact_phone || null,
-        capitalize(e.beneficiary_name) || null, e.beneficiary_relationship || null, e.beneficiary_phone || null
+        parseStr(e.employee_number), firstNameCap, parseStr(paternalCap), parseStr(maternalCap), lastNameCap,
+        e.curp ? e.curp.toUpperCase() : null, e.rfc ? e.rfc.toUpperCase() : null, parseStr(e.nss), parseDateStr(e.birth_date), capitalize(e.birth_place_municipality) || null, capitalize(e.birth_place_state) || null,
+        parseStr(e.gender), parseStr(e.marital_status), parseStr(e.education_level), parseStr(e.last_grade), parseStr(e.personal_email), parseStr(e.phone), parseStr(e.mobile_phone),
+        parseStr(e.street), parseStr(e.exterior_number), parseStr(e.interior_number), parseStr(e.neighborhood), parseStr(e.postal_code), parseStr(e.municipality), parseStr(e.state), parseStr(e.address),
+        parseStr(e.fiscal_street), parseStr(e.fiscal_exterior_number), parseStr(e.fiscal_interior_number), parseStr(e.fiscal_neighborhood), parseStr(e.fiscal_postal_code), parseStr(e.fiscal_municipality), parseStr(e.fiscal_state),
+        capitalize(e.department), capitalize(e.position) || null, actividadesInput, parseUuid(e.manager_id), parseUuid(e.company_id), parseDateStr(e.hire_date), e.employment_status || 'activo',
+        parseStr(e.contract_type), parseDateStr(e.contract_start_date), parseDateStr(e.contract_end_date),
+        parseNum(e.base_daily_salary), parseNum(e.sdi_salary), parseNum(e.base_salary), e.payroll_type || 'QUI',
+        e.has_infonavit_credit || 'NO', parseStr(e.infonavit_credit_number), parseNum(e.infonavit_discount_value),
+        parseStr(e.bank_name), parseStr(e.bank_account), parseStr(e.bank_clabe),
+        capitalize(e.emergency_contact_name) || null, parseStr(e.emergency_contact_relationship), parseStr(e.emergency_contact_phone),
+        capitalize(e.beneficiary_name) || null, parseStr(e.beneficiary_relationship), parseStr(e.beneficiary_phone)
       ]
     );
 
@@ -1277,7 +1283,7 @@ router.post("/", async (req, res) => {
   }
 });
 
-// PUT /api/employees/:id -> Actualizar expediente de empleado
+// 🟢 PUT /api/employees/:id (RESILIENTE A ERRORES DE SINTAXIS POSTGRESQL)
 router.put("/:id", async (req, res) => {
   const { id } = req.params;
   const e = req.body;
@@ -1301,7 +1307,7 @@ router.put("/:id", async (req, res) => {
       [paternalCap, maternalCap].filter(Boolean).join(" ").trim() ||
       capitalize(e.last_name);
 
-    const actividadesInput = e.job_activities || e.jobActivities || e.actividades || e.actividades_puesto || null;
+    const actividadesInput = parseStr(e.job_activities || e.jobActivities || e.actividades || e.actividades_puesto);
 
     const updateQuery = `
       UPDATE employees SET
@@ -1370,64 +1376,64 @@ router.put("/:id", async (req, res) => {
        RETURNING *`;
 
     const updateParams = [
-      e.employee_number || null,                                                // $1
+      parseStr(e.employee_number),                                              // $1
       firstNameCap,                                                             // $2
-      paternalCap || null,                                                      // $3
-      maternalCap || null,                                                      // $4
+      parseStr(paternalCap),                                                    // $3
+      parseStr(maternalCap),                                                    // $4
       lastNameCap,                                                              // $5
       e.curp ? e.curp.toUpperCase() : null,                                     // $6
       e.rfc ? e.rfc.toUpperCase() : null,                                       // $7
-      e.nss || null,                                                            // $8
-      e.birth_date || null,                                                     // $9
+      parseStr(e.nss),                                                          // $8
+      parseDateStr(e.birth_date),                                               // $9
       capitalize(e.birth_place_municipality) || null,                          // $10
       capitalize(e.birth_place_state) || null,                                 // $11
-      e.gender || null,                                                         // $12
-      e.marital_status || null,                                                 // $13
-      e.education_level || null,                                                // $14
-      e.last_grade || null,                                                     // $15
-      e.personal_email || null,                                                 // $16
-      e.phone || null,                                                          // $17
-      e.mobile_phone || null,                                                   // $18
-      e.street || null,                                                         // $19
-      e.exterior_number || null,                                                // $20
-      e.interior_number || null,                                                // $21
-      e.neighborhood || null,                                                   // $22
-      e.postal_code || null,                                                    // $23
-      e.municipality || null,                                                   // $24
-      e.state || null,                                                          // $25
-      e.address || null,                                                        // $26
-      e.fiscal_street || null,                                                  // $27
-      e.fiscal_exterior_number || null,                                         // $28
-      e.fiscal_interior_number || null,                                         // $29
-      e.fiscal_neighborhood || null,                                            // $30
-      e.fiscal_postal_code || null,                                             // $31
-      e.fiscal_municipality || null,                                            // $32
-      e.fiscal_state || null,                                                   // $33
+      parseStr(e.gender),                                                       // $12
+      parseStr(e.marital_status),                                               // $13
+      parseStr(e.education_level),                                              // $14
+      parseStr(e.last_grade),                                                   // $15
+      parseStr(e.personal_email),                                               // $16
+      parseStr(e.phone),                                                        // $17
+      parseStr(e.mobile_phone),                                                 // $18
+      parseStr(e.street),                                                       // $19
+      parseStr(e.exterior_number),                                              // $20
+      parseStr(e.interior_number),                                              // $21
+      parseStr(e.neighborhood),                                                 // $22
+      parseStr(e.postal_code),                                                  // $23
+      parseStr(e.municipality),                                                 // $24
+      parseStr(e.state),                                                        // $25
+      parseStr(e.address),                                                      // $26
+      parseStr(e.fiscal_street),                                                // $27
+      parseStr(e.fiscal_exterior_number),                                       // $28
+      parseStr(e.fiscal_interior_number),                                       // $29
+      parseStr(e.fiscal_neighborhood),                                          // $30
+      parseStr(e.fiscal_postal_code),                                           // $31
+      parseStr(e.fiscal_municipality),                                          // $32
+      parseStr(e.fiscal_state),                                                 // $33
       capitalize(e.department),                                                 // $34
       capitalize(e.position) || null,                                           // $35
-      e.manager_id || null,                                                     // $36
-      e.company_id || null,                                                     // $37
-      e.hire_date || null,                                                      // $38
+      parseUuid(e.manager_id),                                                  // $36
+      parseUuid(e.company_id),                                                  // $37
+      parseDateStr(e.hire_date),                                                // $38
       e.employment_status || "activo",                                          // $39
-      e.contract_type || null,                                                  // $40
-      e.contract_start_date || null,                                            // $41
-      e.contract_end_date || null,                                              // $42
-      e.base_daily_salary ? parseFloat(e.base_daily_salary) : null,            // $43
-      e.sdi_salary ? parseFloat(e.sdi_salary) : null,                           // $44
-      e.base_salary ? parseFloat(e.base_salary) : null,                         // $45
+      parseStr(e.contract_type),                                                // $40
+      parseDateStr(e.contract_start_date),                                     // $41
+      parseDateStr(e.contract_end_date),                                       // $42
+      parseNum(e.base_daily_salary),                                            // $43
+      parseNum(e.sdi_salary),                                                   // $44
+      parseNum(e.base_salary),                                                  // $45
       e.payroll_type || "QUI",                                                  // $46
       e.has_infonavit_credit || "NO",                                           // $47
-      e.infonavit_credit_number || null,                                        // $48
-      e.infonavit_discount_value ? parseFloat(e.infonavit_discount_value) : null, // $49
-      e.bank_name || null,                                                      // $50
-      e.bank_account || null,                                                   // $51
-      e.bank_clabe || null,                                                     // $52
+      parseStr(e.infonavit_credit_number),                                      // $48
+      parseNum(e.infonavit_discount_value),                                     // $49
+      parseStr(e.bank_name),                                                    // $50
+      parseStr(e.bank_account),                                                 // $51
+      parseStr(e.bank_clabe),                                                   // $52
       capitalize(e.emergency_contact_name) || null,                             // $53
-      e.emergency_contact_relationship || null,                                 // $54
-      e.emergency_contact_phone || null,                                        // $55
+      parseStr(e.emergency_contact_relationship),                               // $54
+      parseStr(e.emergency_contact_phone),                                      // $55
       capitalize(e.beneficiary_name) || null,                                   // $56
-      e.beneficiary_relationship || null,                                       // $57
-      e.beneficiary_phone || null,                                              // $58
+      parseStr(e.beneficiary_relationship),                                     // $57
+      parseStr(e.beneficiary_phone),                                            // $58
       actividadesInput,                                                         // $59
       e.work_schedule || "Lunes a Viernes de 09:00 a 18:00 hrs",                // $60
       id                                                                        // $61
@@ -1474,7 +1480,7 @@ router.put("/:id", async (req, res) => {
   }
 });
 
-// DELETE /api/employees/:id -> ELIMINAR CUALQUIER EMPLEADO REGISTRADO
+// DELETE /api/employees/:id
 router.delete("/:id", async (req, res) => {
   const { id } = req.params;
   try {

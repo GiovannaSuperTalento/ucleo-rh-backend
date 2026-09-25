@@ -704,9 +704,10 @@ async function checkAndFixSchema() {
       );
     `);
 
-    // 4. Tabla 'employees'
+    // 4. Tabla 'employees' (Se agrega employee_number y columnas faltantes)
     await pool.query(`
       ALTER TABLE employees 
+      ADD COLUMN IF NOT EXISTS employee_number VARCHAR(50),
       ADD COLUMN IF NOT EXISTS last_name_paternal VARCHAR(255),
       ADD COLUMN IF NOT EXISTS last_name_maternal VARCHAR(255),
       ADD COLUMN IF NOT EXISTS curp VARCHAR(50),
