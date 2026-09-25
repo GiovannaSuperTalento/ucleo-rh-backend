@@ -1185,6 +1185,39 @@ router.post("/:id/fill-custom-template", upload.single("template"), async (req, 
 });
 
 // GET /api/employees/:id
+// GET /api/employees -> Lista de empleados (con búsqueda opcional ?search=)
+router.get("/", async (req, res) => {
+  const { search } = req.query;
+
+  try {
+    let query = `
+      SELECT e.*, c.legal_name AS company_name
+      FROM employees e
+      LEFT JOIN companies c ON c.id::text = e.company_id::text
+    `;
+    const params = [];
+
+    if (search && search.trim() !== "") {
+      params.push(`%${search.trim()}%`);
+      query += `
+        WHERE e.first_name ILIKE $1
+           OR e.last_name ILIKE $1
+           OR e.email ILIKE $1
+           OR e.department ILIKE $1
+           OR e.position ILIKE $1
+      `;
+    }
+
+    query += " ORDER BY e.first_name ASC";
+
+    const result = await pool.query(query, params);
+    res.json(result.rows);
+  } catch (err) {
+    console.error("❌ Error al listar empleados:", err.message);
+    res.status(500).json({ message: "Error al cargar la lista de empleados." });
+  }
+});
+
 router.get("/:id", async (req, res) => {
   const { id } = req.params;
 
