@@ -8,6 +8,7 @@ const documentsRouter = require("./routes/documents");
 const companiesRouter = require("./routes/companies");
 const employeesRouter = require("./routes/employees");
 const announcementsRouter = require("./routes/announcements");
+const atsRouter = require("./routes/ats");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const JWT_SECRET = process.env.JWT_SECRET || "nucleo_rh_secret_key_2026";
@@ -38,6 +39,7 @@ app.use("/api", aiAssistantRouter);
 app.use("/api/companies", companiesRouter);
 app.use("/api/employees", employeesRouter);
 app.use("/api/announcements", announcementsRouter);
+app.use("/api/ats", atsRouter);
 
 app.use("/api/documents/generate", (req, res, next) => {
   if (req.method === "POST" && req.body) {
@@ -670,6 +672,62 @@ async function checkAndFixSchema() {
         registro_patronal VARCHAR(100),
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
+    `);
+
+    // Módulo ATS: vacantes, perfiles de candidatos y postulaciones.
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS ats_vacancies (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        title VARCHAR(255) NOT NULL,
+        company_id TEXT,
+        department VARCHAR(255),
+        location VARCHAR(255),
+        employment_type VARCHAR(100),
+        description TEXT,
+        requirements TEXT,
+        status VARCHAR(20) NOT NULL DEFAULT 'abierta',
+        created_by TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE TABLE IF NOT EXISTS ats_candidates (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        first_name VARCHAR(150) NOT NULL,
+        last_name VARCHAR(150) NOT NULL,
+        email VARCHAR(255) NOT NULL,
+        email_normalized VARCHAR(255) NOT NULL UNIQUE,
+        phone VARCHAR(80),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE TABLE IF NOT EXISTS ats_applications (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        vacancy_id UUID NOT NULL REFERENCES ats_vacancies(id) ON DELETE CASCADE,
+        candidate_id UUID NOT NULL REFERENCES ats_candidates(id) ON DELETE CASCADE,
+        stage VARCHAR(30) NOT NULL DEFAULT 'recibido',
+        source VARCHAR(255),
+        cv_storage_name VARCHAR(255),
+        cv_original_name VARCHAR(255),
+        applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE (vacancy_id, candidate_id)
+      );
+
+      CREATE TABLE IF NOT EXISTS ats_application_activity (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        application_id UUID NOT NULL REFERENCES ats_applications(id) ON DELETE CASCADE,
+        activity_type VARCHAR(30) NOT NULL,
+        content TEXT NOT NULL,
+        created_by TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_ats_applications_vacancy_stage
+        ON ats_applications (vacancy_id, stage);
+      CREATE INDEX IF NOT EXISTS idx_ats_activity_application_created
+        ON ats_application_activity (application_id, created_at DESC);
     `);
 
     // 2. Tablas de Departamentos
